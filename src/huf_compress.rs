@@ -4,9 +4,6 @@
 //! From `ZSTD_btultra` up the depth of the table is the one that comes out smallest
 //! (`HUF_flags_optimalDepth`); below, a quicker estimate.
 
-// (The arithmetic is written as the original has it.)
-#![allow(clippy::manual_div_ceil, clippy::needless_range_loop)]
-
 use super::common::{CError, CResult, highbit32, write_le16};
 use super::fse_compress::{self, FseCTable};
 use super::hist;
@@ -183,11 +180,16 @@ fn write_ctable(
 
     // Convert to weights.
     bits_to_weight[0] = 0;
-    for n in 1..huff_log as usize + 1 {
-        bits_to_weight[n] = (huff_log as usize + 1 - n) as u8;
+    for (n, weight) in bits_to_weight
+        .iter_mut()
+        .enumerate()
+        .take(huff_log as usize + 1)
+        .skip(1)
+    {
+        *weight = (huff_log as usize + 1 - n) as u8;
     }
-    for n in 0..max_symbol_value {
-        huff_weight[n] = bits_to_weight[get_nb_bits(ct[n]) as usize];
+    for (weight, &code) in huff_weight[..max_symbol_value].iter_mut().zip(ct) {
+        *weight = bits_to_weight[get_nb_bits(code) as usize];
     }
 
     // Attempt the weights compression by FSE.
@@ -208,7 +210,7 @@ fn write_ctable(
         // should not happen: likely means the source cannot be compressed
         return Err(CError::Generic);
     }
-    if ((max_symbol_value + 1) / 2) + 1 > max_dst_size {
+    if max_symbol_value.div_ceil(2) + 1 > max_dst_size {
         return Err(CError::DstSizeTooSmall); // not enough space within the dst buffer
     }
     dst[0] = (128 /* special case */ + (max_symbol_value - 1)) as u8;
@@ -219,7 +221,7 @@ fn write_ctable(
         dst[(n / 2) + 1] = (huff_weight[n] << 4).wrapping_add(huff_weight[n + 1]);
         n += 2;
     }
-    Ok(((max_symbol_value + 1) / 2) + 1)
+    Ok(max_symbol_value.div_ceil(2) + 1)
 }
 
 /// The original's `huffNode`: a view of the node table that starts at its second element,
@@ -454,9 +456,8 @@ fn sort(
     // each bucket is tracked by putting the number of symbols in that bucket in
     // rankPosition[lowerRank].base, then taking the cumulative sum.
     rank_position.fill(RankPos::default());
-    for n in 0..max_symbol_value1 {
-        let lower_rank = get_index(count[n]) as usize;
-        rank_position[lower_rank].base += 1;
+    for &c in &count[..max_symbol_value1] {
+        rank_position[get_index(c) as usize].base += 1;
     }
 
     // Set base and curr to position of first element in the bucket.
@@ -468,8 +469,7 @@ fn sort(
     }
 
     // Insert each symbol into its appropriate bucket, building up huffNode.
-    for n in 0..max_symbol_value1 {
-        let c = count[n];
+    for (n, &c) in count[..max_symbol_value1].iter().enumerate() {
         let r = get_index(c) as usize + 1;
         let pos = rank_position[r].curr as usize;
         rank_position[r].curr += 1;
@@ -478,9 +478,11 @@ fn sort(
     }
 
     // Sort each bucket.
-    for n in RANK_POSITION_DISTINCT_COUNT_CUTOFF as usize..RANK_POSITION_TABLE_SIZE - 1 {
-        let bucket_size = rank_position[n].curr as i32 - rank_position[n].base as i32;
-        let bucket_start_idx = rank_position[n].base as usize;
+    for rank in
+        &rank_position[RANK_POSITION_DISTINCT_COUNT_CUTOFF as usize..RANK_POSITION_TABLE_SIZE - 1]
+    {
+        let bucket_size = rank.curr as i32 - rank.base as i32;
+        let bucket_start_idx = rank.base as usize;
         if bucket_size > 1 {
             simple_quick_sort(&mut huff_node[bucket_start_idx..], 0, bucket_size - 1);
         }
@@ -975,7 +977,7 @@ fn compress1x_using_ctable(dst: &mut [u8], src: &[u8], ctable: &HufCTable) -> us
 /// `HUF_compress4X_usingCTable_internal`: four streams of codes behind their three sizes.
 fn compress4x_using_ctable(dst: &mut [u8], src: &[u8], ctable: &HufCTable) -> usize {
     let src_size = src.len();
-    let segment_size = (src_size + 3) / 4; // first 3 segments
+    let segment_size = src_size.div_ceil(4); // first 3 segments
     let mut ip = 0usize;
     let mut op = 0usize;
 

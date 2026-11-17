@@ -3,7 +3,7 @@
 //!
 //! `tests/data/zstd_compress_expected.txt` is what `compare/dump_zstd_compress.c` printed for
 //! `zstd_compress_small 7 200` (see `compare/compare.sh`): hashes of the frames libzstd's
-//! `ZSTD_compress` makes of made-up data of thirteen kinds, at the levels that are ported.
+//! `ZSTD_compress` makes of synthetic data of thirteen kinds, at the levels that are ported.
 //! `tests/data/zstd_compress_more_expected.txt` is what it printed for
 //! `zstd_compress_more_small 7 160`: the same at the levels from 4 to 22, of the strategies
 //! from greedy to the second ultra one.

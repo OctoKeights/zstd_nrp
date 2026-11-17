@@ -1,12 +1,12 @@
 # Recorded results
 
-`zstd_frames.bin` holds Zstandard frames that the zstd library made of made-up data, as
+`zstd_frames.bin` holds Zstandard frames that the zstd library made of synthetic data, as
 `compare/dump_zstd.c` wrote them, and `zstd_decode_expected.txt` what zstd's reference decoder
 makes of each, as the same program prints it; `tests/decode_golden.rs` checks that the port
 prints the same from the same frames.
 
 `zstd_compress_expected.txt` is what `compare/dump_zstd_compress.c` prints of the frames the
-zstd library's `ZSTD_compress` makes of made-up data (`zstd_compress_more_expected.txt` the
+zstd library's `ZSTD_compress` makes of synthetic data (`zstd_compress_more_expected.txt` the
 same at the levels from 4 up), and `zstd_entropy_expected.txt` what
 `compare/dump_zstd_entropy.c` prints of the answers of the entropy coders inside that
 library, asked one function at a time; `tests/compress_golden.rs` checks that the port prints
@@ -22,5 +22,4 @@ itself:
     "$tmp/dump-zstd-compress" zstd_compress_more_small 7 160 > tests/data/zstd_compress_more_expected.txt
     "$tmp/dump-zstd-entropy" zstd_entropy 9 4000 > tests/data/zstd_entropy_expected.txt
 
-No picture or file from anywhere is in this repository: every file and stream the tests and
-the comparison use is made up from a seed.
+All test data is generated from seeds; no external files are used.

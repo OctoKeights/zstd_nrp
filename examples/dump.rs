@@ -1,10 +1,10 @@
-//! The Rust half of the comparison with zstd: runs the port over made-up data and
+//! The Rust half of the comparison with zstd: runs the port over synthetic data and
 //! prints a running hash of what comes out, as `compare/dump_zstd*.c` does with the original.
 //! `compare/compare.sh` compares the two.
 //!
 //!   dump zstd_decode <seed> <count> <file>         the frames compare/dump_zstd.c wrote to the
 //!   dump zstd_decode_small <seed> <count> <file>   file, each asked its size and decoded
-//!   dump zstd_compress <seed> <count>              made-up data compressed at levels 1 to 4,
+//!   dump zstd_compress <seed> <count>              synthetic data compressed at levels 1 to 4,
 //!   dump zstd_compress_small <seed> <count>        0 and the negative ones
 //!   dump zstd_compress_more <seed> <count>         the same at levels 4 to 22
 //!   dump zstd_compress_more_small <seed> <count>

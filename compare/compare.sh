@@ -4,7 +4,7 @@
 #   compare/compare.sh <checkout of zstd> [count] [seeds] [dumps]
 #
 # zstd's library is built from the checkout (without assembly and without threads), and the C
-# programs here against it; examples/dump.rs is built from the port. Both run the same made-up
+# programs here against it; examples/dump.rs is built from the port. Both run the same synthetic
 # data for each seed, and what they print is compared byte for byte.
 #
 # The decoder: compare/dump_zstd.c has the library make frames of every kind, which it writes to
@@ -13,7 +13,7 @@
 # the program. Dump: zstd_decode, with a tenth of [count] (200,000 by default) as the number of
 # frames.
 #
-# The compressor: compare/dump_zstd_compress.c has ZSTD_compress make frames of made-up data at
+# The compressor: compare/dump_zstd_compress.c has ZSTD_compress make frames of synthetic data at
 # every level, and compare/dump_zstd_entropy.c asks the entropy coders inside the library one
 # function at a time, for what a whole frame seldom or never asks of them. Dumps: zstd_compress
 # (levels 1 to 3, 4 for some sizes, 0 and the negative ones) and zstd_compress_more (4 to 22),

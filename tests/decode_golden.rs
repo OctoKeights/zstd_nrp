@@ -2,7 +2,7 @@
 //! change shows without a C compiler at hand.
 //!
 //! `tests/data/zstd_frames.bin` holds the frames `compare/dump_zstd.c` made with the zstd
-//! library for `zstd_decode_small 6 120` (see `compare/compare.sh`): made-up data compressed
+//! library for `zstd_decode_small 6 120` (see `compare/compare.sh`): synthetic data compressed
 //! at every level and with every kind of setting, with and without dictionaries, a third of
 //! the frames damaged. `tests/data/zstd_decode_expected.txt` is what that program printed for
 //! them: a hash of what the reference decoder makes of each, or of the message it stops with.
@@ -28,7 +28,7 @@ fn decodes_as_the_reference_decoder_does() {
 /// when the decoder is changed.)
 #[test]
 fn badly_damaged_frames_are_decoded_or_refused() {
-    use zstd_nrp::{Dictionary, decompress_with_dict, get_decompressed_size};
+    use zstd_nrp::{Dictionary, decompress_with_dict, decompressed_size};
     const ROUNDS: u32 = 40;
     let file = include_bytes!("data/zstd_frames.bin");
     let mut r = made_up::Random { state: 5 };
@@ -64,7 +64,7 @@ fn badly_damaged_frames_are_decoded_or_refused() {
                     dict[place] = r.next() as u8;
                 }
             }
-            let _ = get_decompressed_size(&frame);
+            let _ = decompressed_size(&frame);
             let parsed = if dict.is_empty() {
                 Ok(Dictionary::default())
             } else {

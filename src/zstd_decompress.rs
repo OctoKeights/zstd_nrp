@@ -6,24 +6,35 @@
 //! It decodes one frame, with or without a dictionary, into no more than the room it is
 //! given. Like its original it checks no checksum, and does not check that a frame gave as
 //! many bytes as its header says. Where the original stops the program with a message, the
-//! port gives the message back in a [`ZstdError`].
+//! port gives the message back in a [`DecompressError`].
 
-// (The arithmetic is written as the original has it.)
-#![allow(clippy::manual_div_ceil)]
+/// Why a frame could not be decompressed: the message the reference decoder stops with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DecompressError {
+    message: &'static str,
+}
 
-/// Why a frame was refused: the message the reference decoder stops with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ZstdError(pub &'static str);
+impl DecompressError {
+    const fn new(message: &'static str) -> DecompressError {
+        DecompressError { message }
+    }
 
-impl std::fmt::Display for ZstdError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
+    /// The reference decoder's message, such as `"Input buffer smaller than it should be or
+    /// input corrupted"`.
+    pub fn message(&self) -> &'static str {
+        self.message
     }
 }
 
-impl std::error::Error for ZstdError {}
+impl std::fmt::Display for DecompressError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message)
+    }
+}
 
-type R<T> = Result<T, ZstdError>;
+impl std::error::Error for DecompressError {}
+
+type R<T> = Result<T, DecompressError>;
 
 /******* IMPORTANT CONSTANTS *********************************************/
 
@@ -43,7 +54,7 @@ const MAX_LITERALS_SIZE: usize = ZSTD_BLOCK_SIZE_MAX;
 /// `ERROR`: this decoder calls exit(1) when it encounters an error, however a production
 /// library should propagate error codes
 fn error<T>(s: &'static str) -> R<T> {
-    Err(ZstdError(s))
+    Err(DecompressError::new(s))
 }
 fn inp_size<T>() -> R<T> {
     error("Input buffer smaller than it should be or input is corrupted")
@@ -228,6 +239,22 @@ fn read_bits_le(src: &[u8], num_bits: i32, offset: usize) -> R<u64> {
     // Skip over bytes that aren't in range
     let mut at = offset / 8;
     let mut bit_offset = offset % 8;
+
+    // (All of them from one word, where the input has a word left and the bits fit in it.)
+    if num_bits <= 0 {
+        return Ok(0);
+    }
+    if let Some(word) = src.get(at..at + 8)
+        && bit_offset + num_bits as usize <= 64
+    {
+        let word = u64::from_le_bytes(word.try_into().unwrap()) >> bit_offset;
+        return Ok(if num_bits == 64 {
+            word
+        } else {
+            word & ((1 << num_bits) - 1)
+        });
+    }
+
     let mut res = 0u64;
 
     let mut shift = 0;
@@ -386,21 +413,21 @@ struct SequenceCommand {
     offset: u32,
 }
 
-/// Decompresses a Zstandard frame into no more than `dst_len` bytes: `ZSTD_decompress`. The
-/// bytes that come after the frame are not looked at.
-pub fn decompress(src: &[u8], dst_len: usize) -> Result<Vec<u8>, ZstdError> {
-    decompress_with_dict(src, dst_len, &Dictionary::default())
+/// Decompresses a Zstandard frame that holds no more than `max_len` bytes
+/// (`ZSTD_decompress`). Anything after the frame is ignored.
+pub fn decompress(frame: &[u8], max_len: usize) -> Result<Vec<u8>, DecompressError> {
+    decompress_with_dict(frame, max_len, &Dictionary::default())
 }
 
-/// Decompresses a Zstandard frame that was compressed with a dictionary:
-/// `ZSTD_decompress_with_dict`.
+/// Decompresses a Zstandard frame compressed with a dictionary, that holds no more than
+/// `max_len` bytes (`ZSTD_decompress_with_dict`).
 pub fn decompress_with_dict(
-    src: &[u8],
-    dst_len: usize,
+    frame: &[u8],
+    max_len: usize,
     parsed_dict: &Dictionary,
-) -> Result<Vec<u8>, ZstdError> {
-    let mut input = IStream::new(src);
-    let mut out = OStream::new(dst_len);
+) -> Result<Vec<u8>, DecompressError> {
+    let mut input = IStream::new(frame);
+    let mut out = OStream::new(max_len);
 
     /* this decoder assumes decompression of a single frame */
     decode_frame(&mut out, &mut input, parsed_dict)?;
@@ -799,7 +826,7 @@ fn decode_huf_table(input: &mut IStream) -> R<HufDtable> {
         // even if Number_of_Symbols is odd. Number_of_Symbols = headerByte -
         // 127"
         num_symbs = usize::from(header) - 127;
-        let bytes = (num_symbs + 1) / 2;
+        let bytes = num_symbs.div_ceil(2);
 
         let weight_src = input.get_read_ptr(bytes)?;
 
@@ -1300,23 +1327,31 @@ fn execute_match_copy(
     // (An offset of nothing, which the original lets through, copies each place onto itself:
     // into room that starts as zeros, that is zeros.)
     let offset = offset as usize;
-    for _ in 0..match_length {
-        let byte = if offset == 0 {
-            0
-        } else {
-            out.out[out.out.len() - offset]
-        };
-        out.out.push(byte);
+    let end = out.out.len();
+    if offset == 0 {
+        out.out.resize(end + match_length, 0);
+    } else if offset <= end && offset >= match_length {
+        // (Not overlapping what it writes: all at once.)
+        out.out
+            .extend_from_within(end - offset..end - offset + match_length);
+    } else if offset == 1 {
+        let byte = out.out[end - 1];
+        out.out.resize(end + match_length, byte);
+    } else {
+        for _ in 0..match_length {
+            let byte = out.out[out.out.len() - offset];
+            out.out.push(byte);
+        }
     }
     Ok(())
 }
 
 /******* OUTPUT SIZE COUNTING *************************************************/
 
-/// The size a frame's header says it decompresses to: `ZSTD_get_decompressed_size`. None when
-/// the header does not say (the original gives -1).
-pub fn get_decompressed_size(src: &[u8]) -> Result<Option<u64>, ZstdError> {
-    let mut input = IStream::new(src);
+/// The size a frame's header says it decompresses to, or `None` when the header does not say
+/// (`ZSTD_get_decompressed_size`, which gives -1 then).
+pub fn decompressed_size(frame: &[u8]) -> Result<Option<u64>, DecompressError> {
+    let mut input = IStream::new(frame);
 
     // get decompressed size from ZSTD frame header
     let magic_number = input.read_bits(32)? as u32;
@@ -1342,7 +1377,7 @@ pub fn get_decompressed_size(src: &[u8]) -> Result<Option<u64>, ZstdError> {
 impl Dictionary {
     /// A dictionary out of its bytes: `parse_dictionary`. Bytes that do not begin as a
     /// dictionary with tables does are a dictionary of content alone.
-    pub fn parse(src: &[u8]) -> Result<Dictionary, ZstdError> {
+    pub fn parse(src: &[u8]) -> Result<Dictionary, DecompressError> {
         let mut dict = Dictionary::default();
         if src.len() < 8 {
             return error("Dictionary size cannot be less than 8 bytes");
@@ -2029,21 +2064,21 @@ mod tests {
             0x28, 0xb5, 0x2f, 0xfd, 0x20, 5, 0x29, 0, 0, b'h', b'e', b'l', b'l', b'o',
         ];
         assert_eq!(decompress(&raw, 5).as_deref(), Ok(&b"hello"[..]));
-        assert_eq!(get_decompressed_size(&raw), Ok(Some(5)));
+        assert_eq!(decompressed_size(&raw), Ok(Some(5)));
         assert_eq!(
             decompress(&raw, 4),
-            Err(ZstdError("Output buffer too small for output"))
+            Err(DecompressError::new("Output buffer too small for output"))
         );
         assert_eq!(
             decompress(&raw[..12], 5),
-            Err(ZstdError(
+            Err(DecompressError::new(
                 "Input buffer smaller than it should be or input is corrupted"
             ))
         );
         // One block of a byte repeated, with a window and no size.
         let rle = [0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00, 0x53, 0, 0, b'z'];
         assert_eq!(decompress(&rle, 100).as_deref(), Ok(&[b'z'; 10][..]));
-        assert_eq!(get_decompressed_size(&rle), Ok(None));
+        assert_eq!(decompressed_size(&rle), Ok(None));
         // A compressed block: raw literals "abc", and one sequence that copies them twice
         // more (literal length 3, match length 6, offset 3: the predefined codes 3, 3 and 2,
         // with two extra bits for the offset). Its bits, from the last read to the first:
@@ -2067,35 +2102,43 @@ mod tests {
         assert_eq!(decompress(&packed, 9).as_deref(), Ok(&b"abcabcabc"[..]));
         assert_eq!(
             decompress(&packed, 8),
-            Err(ZstdError("Output buffer too small for output"))
+            Err(DecompressError::new("Output buffer too small for output"))
         );
         // The same with one bit more than the sequence takes.
         let mut longer = packed.clone();
         longer[15..18].copy_from_slice(&(((bits & !(1 << 19)) | (1 << 20)).to_le_bytes()[..3]));
         assert_eq!(
             decompress(&longer, 9),
-            Err(ZstdError("Corruption detected while decompressing"))
+            Err(DecompressError::new(
+                "Corruption detected while decompressing"
+            ))
         );
         // No frame, a reserved bit, a block of the kind there is none of.
         assert_eq!(
             decompress(b"not zstd", 10),
-            Err(ZstdError("Tried to decode non-ZSTD frame"))
+            Err(DecompressError::new("Tried to decode non-ZSTD frame"))
         );
         assert_eq!(
-            get_decompressed_size(b"not zstd"),
-            Err(ZstdError("ZSTD frame magic number did not match"))
+            decompressed_size(b"not zstd"),
+            Err(DecompressError::new(
+                "ZSTD frame magic number did not match"
+            ))
         );
         assert_eq!(
             decompress(&[0x28, 0xb5, 0x2f, 0xfd, 0x28, 0], 10),
-            Err(ZstdError("Corruption detected while decompressing"))
+            Err(DecompressError::new(
+                "Corruption detected while decompressing"
+            ))
         );
         assert_eq!(
             decompress(&[0x28, 0xb5, 0x2f, 0xfd, 0x20, 0, 0x07, 0, 0], 10),
-            Err(ZstdError("Corruption detected while decompressing"))
+            Err(DecompressError::new(
+                "Corruption detected while decompressing"
+            ))
         );
         assert_eq!(
             decompress(&[], 10),
-            Err(ZstdError(
+            Err(DecompressError::new(
                 "Input buffer smaller than it should be or input is corrupted"
             ))
         );
@@ -2118,11 +2161,11 @@ mod tests {
         assert!(huf_init_dtable_usingweights(&[0; HUF_MAX_SYMBS], 4).is_err());
         assert_eq!(
             huf_init_dtable_usingweights(&weights, 256).err(),
-            Some(ZstdError("Too many symbols for Huffman"))
+            Some(DecompressError::new("Too many symbols for Huffman"))
         );
         assert_eq!(
             huf_init_dtable(&[17]).err(),
-            Some(ZstdError("Huffman table depth too large"))
+            Some(DecompressError::new("Huffman table depth too large"))
         );
     }
 

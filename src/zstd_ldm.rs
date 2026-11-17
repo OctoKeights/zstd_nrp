@@ -8,9 +8,6 @@
 //! a match of them, as long as it goes both ways. The optimal parser takes those matches as
 //! candidates of its own.
 
-// (The arithmetic is written as the original has it.)
-#![allow(clippy::implicit_saturating_sub, clippy::manual_is_multiple_of)]
-
 use super::common::{read32, read64};
 use super::zstd_compress::{
     CompressionParameters, HASH_READ_SIZE, RawSeq, Window, ZSTD_WINDOW_START_INDEX, count,
@@ -470,8 +467,7 @@ impl LdmState {
         let max_dist = 1u32 << self.params.window_log;
         let iend = istart + src_size;
         const K_MAX_CHUNK_SIZE: usize = 1 << 20;
-        let nb_chunks =
-            (src_size / K_MAX_CHUNK_SIZE) + usize::from(src_size % K_MAX_CHUNK_SIZE != 0);
+        let nb_chunks = src_size.div_ceil(K_MAX_CHUNK_SIZE);
         let mut leftover_size = 0usize;
 
         // The input could be very large (in zstdmt), so it must be broken up into chunks to

@@ -5,14 +5,14 @@
    Rust port, and compare/compare.sh compares the two.
 
      dump zstd_entropy <seed> <count>   one of three, <count> times:
-                                        - made-up counts through FSE_normalizeCount, the
+                                        - synthetic counts through FSE_normalizeCount, the
                                           result through FSE_writeNCount into room that may
                                           be too little, then symbols through
                                           FSE_buildCTable_wksp and FSE_compress_usingCTable
-                                        - made-up bytes through HUF_compress1X_repeat or
+                                        - synthetic bytes through HUF_compress1X_repeat or
                                           HUF_compress4X_repeat, with or without the table
                                           of the call before
-                                        - made-up bytes through ZSTD_compressLiterals
+                                        - synthetic bytes through ZSTD_compressLiterals
                                         A running hash of every answer and output */
 #define FSE_STATIC_LINKING_ONLY
 #define HUF_STATIC_LINKING_ONLY
@@ -170,7 +170,7 @@ static void TryFse(void)
 static uint8_t g_lit[140000], g_out[150000];
 static size_t g_lit_len;
 
-/* Made-up literals of one of six kinds. */
+/* Synthetic literals of one of six kinds. */
 static void MakeLiterals(uint8_t *buf, size_t len)
 {
     uint32_t shape = Next() % 6, m, value;

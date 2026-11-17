@@ -2,7 +2,7 @@
    (https://github.com/facebook/zstd). examples/dump.rs prints the same from the Rust port,
    and compare/compare.sh compares the two.
 
-     dump zstd_compress <seed> <count>         made-up data of thirteen kinds, from nothing to
+     dump zstd_compress <seed> <count>         synthetic data of thirteen kinds, from nothing to
                                                five megabytes, compressed by ZSTD_compress
                                                into ZSTD_compressBound bytes at the levels
                                                the port takes: 1 to 3, 0 (the default), 4
@@ -15,7 +15,7 @@
                                                now and then a higher one, which is 22)
      dump zstd_compress_more_small <seed> <count>   the same with no more than 40,000 bytes
 
-     dump zstd_compress_long <seed> <count>    made-up data of 64 to 80 megabytes, pieces of
+     dump zstd_compress_long <seed> <count>    synthetic data of 64 to 80 megabytes, pieces of
                                                the other kinds and copies of what came
                                                before, from near and far and a little
                                                changed, at level 22: for the long-distance
@@ -64,7 +64,7 @@ static void AddNumber(uint32_t value)
 
 static const char *const kWords[16] = { "the", "texture", "block", "of", "and", "compress", "a", "level", "mip", "to", "pixels", "in", "format", "is", "cube", "data" };
 
-/* Made-up bytes of one of thirteen kinds. */
+/* Synthetic bytes of one of thirteen kinds. */
 static void FillData(uint8_t *buf, size_t len, uint32_t kind)
 {
     size_t at = 0, i;

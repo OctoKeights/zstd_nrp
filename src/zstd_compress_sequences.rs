@@ -139,11 +139,12 @@ pub(crate) fn fse_bit_cost(ctable: &FseCTable, count: &[u32], max: u32) -> usize
     if ctable.max_symbol_value < max {
         return COST_ERROR;
     }
-    for s in 0..=max as usize {
+    let symbols = max as usize + 1;
+    for (tt, &count) in ctable.symbol_tt[..symbols].iter().zip(&count[..symbols]) {
         let bad_cost = (table_log + 1) << K_ACCURACY_LOG;
         // `FSE_bitCost`.
         let bit_cost = {
-            let delta_nb_bits = ctable.symbol_tt[s].delta_nb_bits;
+            let delta_nb_bits = tt.delta_nb_bits;
             let min_nb_bits = delta_nb_bits >> 16;
             let threshold = (min_nb_bits + 1) << 16;
             let table_size = 1u32 << table_log;
@@ -155,13 +156,13 @@ pub(crate) fn fse_bit_cost(ctable: &FseCTable, count: &[u32], max: u32) -> usize
             let bit_multiplier = 1u32 << K_ACCURACY_LOG;
             ((min_nb_bits + 1) * bit_multiplier).wrapping_sub(normalized_delta_from_threshold)
         };
-        if count[s] == 0 {
+        if count == 0 {
             continue;
         }
         if bit_cost >= bad_cost {
             return COST_ERROR;
         }
-        cost += count[s] as usize * bit_cost as usize;
+        cost += count as usize * bit_cost as usize;
     }
     cost >> K_ACCURACY_LOG
 }

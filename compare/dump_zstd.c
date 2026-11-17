@@ -1,7 +1,7 @@
 /* The C half of the comparison with zstd (https://github.com/facebook/zstd). examples/dump.rs
    prints the same from the Rust port, and compare/compare.sh compares the two.
 
-     dump zstd_decode <seed> <count> <file>         made-up data of eight kinds compressed by
+     dump zstd_decode <seed> <count> <file>         synthetic data of eight kinds compressed by
                                                     the zstd library into frames of every
                                                     kind: every level from the fastest to 22,
                                                     with and without checksums, sizes in the
@@ -61,7 +61,7 @@ static void AddNumber(uint32_t value)
 
 static const char *const kWords[16] = { "the", "texture", "block", "of", "and", "compress", "a", "level", "mip", "to", "pixels", "in", "format", "is", "cube", "data" };
 
-/* Made-up bytes of one of eight kinds. */
+/* Synthetic bytes of one of eight kinds. */
 static void FillData(uint8_t *buf, size_t len, uint32_t kind)
 {
     size_t at = 0, i;

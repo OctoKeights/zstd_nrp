@@ -11,9 +11,6 @@
 //! The original works with pointers; here a place is an offset into the whole input, and a
 //! byte at `pos` has the index `pos + base`.
 
-// (The arithmetic is written as the original has it.)
-#![allow(clippy::implicit_saturating_sub, clippy::manual_is_multiple_of)]
-
 use super::common::{highbit32, read32};
 use super::zstd_compress::{
     K_SEARCH_STRENGTH, MatchState, REPCODE1_TO_OFFBASE, SeqStore, ZSTD_ROW_HASH_CACHE_SIZE, count,
@@ -169,7 +166,7 @@ fn dubt_find_best_match(
 
     let bt_log = ms.cparams.chain_log - 1;
     let bt_mask = (1u32 << bt_log) - 1;
-    let bt_low = if bt_mask >= curr { 0 } else { curr - bt_mask };
+    let bt_low = curr.saturating_sub(bt_mask);
     let unsort_limit = bt_low.max(window_low);
 
     let mut next_candidate = 2 * (match_index & bt_mask) as usize;
@@ -358,11 +355,7 @@ fn hc_find_best_match(
     } else {
         within_max_distance
     };
-    let min_chain = if curr > chain_size {
-        curr - chain_size
-    } else {
-        0
-    };
+    let min_chain = curr.saturating_sub(chain_size);
     let mut nb_attempts = 1u32 << ms.cparams.search_log;
     let mut ml = 4 - 1;
 
@@ -454,6 +447,7 @@ fn row_next_cached_hash(ms: &mut MatchState, src: &[u8], idx: u32, mls: u32) -> 
 
 /// `ZSTD_row_update_internalImpl`: the places from `update_start_idx` to `update_end_idx`
 /// into the hash table.
+#[allow(clippy::too_many_arguments)]
 fn row_update_internal_impl(
     ms: &mut MatchState,
     src: &[u8],
@@ -635,6 +629,7 @@ fn row_find_best_match(
 /// `ZSTD_searchMax`: the length of the longest match from `ip`, and its offset, by the
 /// search method.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn search_max(
     ms: &mut MatchState,
     src: &[u8],

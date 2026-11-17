@@ -1,7 +1,7 @@
-zstd_nrp is a native Rust port of Zstandard, by Meta Platforms, Inc. and affiliates
-(https://github.com/facebook/zstd). As the original is, it is offered under the BSD
+zstd_nrp is a native Rust port of Zstandard v1.5.7, by Meta Platforms, Inc. and
+affiliates (https://github.com/facebook/zstd). As zstd is, it is distributed under the BSD
 licence that follows or under the GNU General Public License, version 2 (in COPYING),
-whichever you prefer. The original's copyright notices are kept, and the port's own work,
+whichever you prefer. zstd's copyright notices are retained, and the port's own work,
 Copyright 2026 OctoKeights, is offered under the same terms.
 
 ------------------------------------------------------------------------------

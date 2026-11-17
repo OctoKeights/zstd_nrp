@@ -94,8 +94,8 @@ pub(crate) fn build_ctable(
         // with the next; what is left is the same.)
         let mut spread = vec![0u8; table_size as usize];
         let mut pos = 0usize;
-        for s in 0..max_sv1 as usize {
-            let n = normalized_counter[s] as i32;
+        for (s, &n) in normalized_counter[..max_sv1 as usize].iter().enumerate() {
+            let n = n as i32;
             if n > 0 {
                 spread[pos..pos + n as usize].fill(s as u8);
                 pos += n as usize;
@@ -138,24 +138,27 @@ pub(crate) fn build_ctable(
 
     // Build the symbol transforms.
     let mut total = 0u32;
-    for s in 0..=max_symbol_value as usize {
-        match normalized_counter[s] {
+    let symbols = max_symbol_value as usize + 1;
+    for (tt, &count) in ct.symbol_tt[..symbols]
+        .iter_mut()
+        .zip(&normalized_counter[..symbols])
+    {
+        match count {
             0 => {
                 // Filled all the same, for the sake of FSE_getMaxNbBits().
-                ct.symbol_tt[s].delta_nb_bits =
-                    ((table_log + 1) << 16).wrapping_sub(1 << table_log);
+                tt.delta_nb_bits = ((table_log + 1) << 16).wrapping_sub(1 << table_log);
             }
             -1 | 1 => {
-                ct.symbol_tt[s].delta_nb_bits = (table_log << 16).wrapping_sub(1 << table_log);
-                ct.symbol_tt[s].delta_find_state = total.wrapping_sub(1) as i32;
+                tt.delta_nb_bits = (table_log << 16).wrapping_sub(1 << table_log);
+                tt.delta_find_state = total.wrapping_sub(1) as i32;
                 total += 1;
             }
             n => {
                 let n = n as u32;
                 let max_bits_out = table_log - highbit32(n - 1);
                 let min_state_plus = n << max_bits_out;
-                ct.symbol_tt[s].delta_nb_bits = (max_bits_out << 16).wrapping_sub(min_state_plus);
-                ct.symbol_tt[s].delta_find_state = total.wrapping_sub(n) as i32;
+                tt.delta_nb_bits = (max_bits_out << 16).wrapping_sub(min_state_plus);
+                tt.delta_find_state = total.wrapping_sub(n) as i32;
                 total += n;
             }
         }
@@ -409,10 +412,10 @@ fn normalize_m2(
         // All values are pretty poor: all of the rest goes to the largest.
         let mut max_v = 0usize;
         let mut max_c = 0u32;
-        for s in 0..=max_symbol_value as usize {
-            if count[s] > max_c {
+        for (s, &c) in count[..=max_symbol_value as usize].iter().enumerate() {
+            if c > max_c {
                 max_v = s;
-                max_c = count[s];
+                max_c = c;
             }
         }
         norm[max_v] = norm[max_v].wrapping_add(to_distribute as i16);

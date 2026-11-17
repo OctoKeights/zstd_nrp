@@ -14,9 +14,6 @@
 //! where the estimates say that comes out smaller, and long-distance matching
 //! (`zstd_ldm`) for a window of 128 MB or more.
 
-// (The arithmetic is written as the original has it.)
-#![allow(clippy::manual_div_ceil, clippy::int_plus_one, clippy::manual_clamp)]
-
 use super::clevels::{ZSTD_CLEVEL_DEFAULT, ZSTD_DEFAULT_CPARAMETERS, ZSTD_MAX_CLEVEL};
 use super::common::{CError, CResult, highbit32, read16, read32, read64, write_le24, write_le32};
 use super::fse_compress::FseCTable;
@@ -30,13 +27,13 @@ use super::zstd_compress_sequences::{
     LL_FSE_LOG, MAX_LL, MAX_ML, MAX_OFF, MAX_SEQ, ML_BITS, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG,
     ML_FSE_LOG, OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG, OFF_FSE_LOG,
 };
-use super::zstd_decompress::ZstdError;
 use super::zstd_double_fast::compress_block_double_fast;
 use super::zstd_fast::compress_block_fast;
 use super::zstd_lazy::{SearchMethod, compress_block_lazy};
 use super::zstd_ldm::LdmState;
 use super::zstd_opt::{compress_block_btultra2, compress_block_opt};
 use super::zstd_presplit::split_block;
+use super::{CompressError, Level};
 
 // From `lib/zstd.h` and `lib/common/zstd_internal.h`.
 const ZSTD_MAGICNUMBER: u32 = 0xFD2FB528;
@@ -182,12 +179,9 @@ pub(crate) fn get_cparams_internal(
     // Row.
     let row = if compression_level == 0 {
         ZSTD_CLEVEL_DEFAULT // 0 == default
-    } else if compression_level < 0 {
-        0 // entry 0 is baseline for fast mode
-    } else if compression_level > ZSTD_MAX_CLEVEL {
-        ZSTD_MAX_CLEVEL
     } else {
-        compression_level
+        // (Entry 0 is the baseline for the negative levels' fast mode.)
+        compression_level.clamp(0, ZSTD_MAX_CLEVEL)
     };
 
     let (window_log, chain_log, hash_log, search_log, min_match, target_length, strategy) =
@@ -2046,35 +2040,30 @@ impl CCtx {
     }
 }
 
-/// `ZSTD_compress`: `src` as one Zstandard frame, at `level`.
+/// Compresses `data` to one Zstandard frame at `level` (`ZSTD_compress`).
 ///
 /// The frame is byte for byte the one libzstd v1.5.7 gives for
-/// `ZSTD_compress(dst, ZSTD_compressBound(n), src, n, level)`. Level 0 is the default
-/// level, 3; negative levels are faster and compress less.
-///
-/// Every level is taken, up to 22 (higher ones are 22). A source of 2 GB or more is
-/// refused.
-pub fn compress(src: &[u8], level: i32) -> Result<Vec<u8>, ZstdError> {
-    if src.len() >= 1usize << 31 {
-        return Err(ZstdError("Source too large to compress"));
+/// `ZSTD_compress(dst, ZSTD_compressBound(n), data, n, level)`. Fails for data of 2 GiB or
+/// more, which this port does not compress.
+pub fn compress(data: &[u8], level: Level) -> Result<Vec<u8>, CompressError> {
+    if data.len() >= 1usize << 31 {
+        return Err(CompressError::SourceTooLarge);
     }
-    let cparams = get_cparams_internal(level, src.len() as u64);
-    let mut dst = vec![0u8; compress_bound(src.len())];
-    let mut cctx = CCtx::new(cparams, src.len() as u64);
-    match cctx.compress_end(&mut dst, src) {
-        Ok(size) => {
-            dst.truncate(size);
-            Ok(dst)
-        }
-        // (An output of `compress_bound` bytes has room for any source.)
-        Err(_) => Err(ZstdError("Compression failed")),
-    }
+    let cparams = get_cparams_internal(level.get(), data.len() as u64);
+    let mut dst = vec![0u8; compress_bound(data.len())];
+    let mut cctx = CCtx::new(cparams, data.len() as u64);
+    let size = cctx
+        .compress_end(&mut dst, data)
+        .expect("an output of `compress_bound` bytes has room for any source");
+    dst.truncate(size);
+    Ok(dst)
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::zstd_decompress::decompress;
     use super::*;
+    use crate::Level;
 
     fn noise(len: usize, mut state: u64, mask: u8) -> Vec<u8> {
         (0..len)
@@ -2092,7 +2081,7 @@ mod tests {
         // The magic number, a header that says "one segment, of no bytes", and one last,
         // empty block.
         assert_eq!(
-            compress(&[], 3).unwrap(),
+            compress(&[], Level::new(3).unwrap()).unwrap(),
             [0x28, 0xB5, 0x2F, 0xFD, 0x20, 0x00, 0x01, 0x00, 0x00]
         );
         assert_eq!(compress_bound(0), 64);
@@ -2122,7 +2111,7 @@ mod tests {
         ];
         for source in &sources {
             for level in [-100, -1, 0, 1, 2, 3] {
-                let frame = compress(source, level).unwrap();
+                let frame = compress(source, Level::new(level).unwrap()).unwrap();
                 assert!(frame.len() <= compress_bound(source.len()));
                 assert_eq!(
                     decompress(&frame, source.len()).as_deref(),
@@ -2133,8 +2122,10 @@ mod tests {
             }
         }
         // What compresses does.
-        assert!(compress(&sources[1], 1).unwrap().len() < 30);
-        assert!(compress(&sources[4], 3).unwrap().len() < sources[4].len() / 5);
+        assert!(compress(&sources[1], Level::new(1).unwrap()).unwrap().len() < 30);
+        assert!(
+            compress(&sources[4], Level::new(3).unwrap()).unwrap().len() < sources[4].len() / 5
+        );
     }
 
     #[test]
@@ -2150,9 +2141,9 @@ mod tests {
                 .as_bytes(),
             );
         }
-        for level in 4..=23 {
+        for level in 4..=22 {
             for source in [&text[..1000], &text[..40_000], &text[..]] {
-                let frame = compress(source, level).unwrap();
+                let frame = compress(source, Level::new(level).unwrap()).unwrap();
                 assert_eq!(
                     decompress(&frame, source.len()).as_deref(),
                     Ok(source),

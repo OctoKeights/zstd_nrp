@@ -1,5 +1,6 @@
-//! Made-up data, the same from a seed here as in the C side of the comparison
-//! (`compare/`), and the dumps the tests run as well as the comparison (`examples/dump.rs`).
+//! Synthetic data, generated from a seed exactly as the C side of the comparison
+//! (`compare/`) generates it, and the dumps that both the golden tests and
+//! `examples/dump.rs` run.
 
 // (The arithmetic is written as the C side has it; not every user of this module uses all of
 // it.)
@@ -51,7 +52,7 @@ impl Hash {
 /// wrote to a file (for each: the room to decode into, a dictionary or none, and the frame),
 /// each asked its size and decoded, as that program does with the reference decoder.
 pub fn zstd_decode(name: &str, count: u32, file: &[u8]) -> String {
-    use zstd_nrp::{Dictionary, decompress_with_dict, get_decompressed_size};
+    use zstd_nrp::{Dictionary, decompress_with_dict, decompressed_size};
     let mut hash = Hash::new();
     let (mut decoded, mut refused) = (0u32, 0u32);
     let mut frame_total = 0u64;
@@ -72,11 +73,11 @@ pub fn zstd_decode(name: &str, count: u32, file: &[u8]) -> String {
         at += frame_size;
         frame_total += frame_size as u64;
 
-        match get_decompressed_size(frame) {
+        match decompressed_size(frame) {
             Ok(size) => hash.add(&(size.map_or(-2i64, |size| size as i64)).to_le_bytes()),
             Err(error) => {
                 hash.add(&(-1i64).to_le_bytes());
-                hash.add(error.0.as_bytes());
+                hash.add(error.message().as_bytes());
                 hash.add(&[0]);
             }
         }
@@ -93,7 +94,7 @@ pub fn zstd_decode(name: &str, count: u32, file: &[u8]) -> String {
             }
             Err(error) => {
                 hash.add(&0xffffffffu32.to_le_bytes());
-                hash.add(error.0.as_bytes());
+                hash.add(error.message().as_bytes());
                 hash.add(&[0]);
                 refused += 1;
             }
@@ -113,7 +114,7 @@ const ZSTD_WORDS: [&str; 16] = [
     "format", "is", "cube", "data",
 ];
 
-/// Made-up bytes of one of thirteen kinds, as `FillData` in `compare/dump_zstd_compress.c`
+/// Synthetic bytes of one of thirteen kinds, as `FillData` in `compare/dump_zstd_compress.c`
 /// makes them.
 pub fn fill_data(r: &mut Random, buf: &mut [u8], kind: u32) {
     let len = buf.len();
@@ -294,9 +295,16 @@ const ZSTD_LEVELS: [i32; 20] = [
     1, 1, 2, 2, 3, 3, 3, 0, 4, 4, -1, -1, -2, -3, -5, -7, -20, -100, -1000, -200000,
 ];
 
-/// The `zstd_compress` dumps: made-up data compressed at the levels that are ported, as
+/// The `zstd_compress` dumps: synthetic data compressed at the levels that are ported, as
 /// `compare/dump_zstd_compress.c` does with `ZSTD_compress`. With `check`, each frame is
 /// also decoded by the port of the reference decoder and compared with its data.
+/// A level as the C side passes it to `ZSTD_compress`, which takes those above 22 as 22 and
+/// those below its lowest as its lowest.
+fn zstd_level(level: i32) -> zstd_nrp::Level {
+    zstd_nrp::Level::new(level.clamp(zstd_nrp::Level::MIN.get(), zstd_nrp::Level::MAX.get()))
+        .expect("a level zstd takes")
+}
+
 pub fn zstd_compress(name: &str, seed: u64, count: u32, check: bool) -> String {
     zstd_compress_up_to(name, seed, count, check, 9)
 }
@@ -357,7 +365,7 @@ pub fn zstd_compress_up_to(name: &str, seed: u64, count: u32, check: bool, highe
         data.clear();
         data.resize(len, 0);
         fill_data(&mut r, &mut data, kind);
-        let frame = zstd_nrp::compress(&data, level).expect("a level that is ported");
+        let frame = zstd_nrp::compress(&data, zstd_level(level)).expect("data under 2 GiB");
         if check {
             assert_eq!(
                 zstd_nrp::decompress(&frame, len).as_deref(),
@@ -388,7 +396,7 @@ pub fn zstd_compress_up_to(name: &str, seed: u64, count: u32, check: bool, highe
     out
 }
 
-/// The `zstd_compress_long` dump: made-up data of 64 to 80 megabytes, as `FillLong` in
+/// The `zstd_compress_long` dump: synthetic data of 64 to 80 megabytes, as `FillLong` in
 /// `compare/dump_zstd_compress.c` makes it, compressed at level 22, which takes
 /// long-distance matching for so much.
 pub fn zstd_compress_long(name: &str, seed: u64, count: u32, check: bool) -> String {
@@ -419,7 +427,7 @@ pub fn zstd_compress_long(name: &str, seed: u64, count: u32, check: bool) -> Str
             }
             at += piece;
         }
-        let frame = zstd_nrp::compress(&data, level).expect("every level is ported");
+        let frame = zstd_nrp::compress(&data, zstd_level(level)).expect("data under 2 GiB");
         if check {
             assert_eq!(
                 zstd_nrp::decompress(&frame, len).as_deref(),
@@ -441,7 +449,7 @@ pub fn zstd_compress_long(name: &str, seed: u64, count: u32, check: bool) -> Str
     out
 }
 
-/// Made-up literals of one of six kinds, as `MakeLiterals` in `compare/dump_zstd_entropy.c`
+/// Synthetic literals of one of six kinds, as `MakeLiterals` in `compare/dump_zstd_entropy.c`
 /// makes them.
 fn make_literals(r: &mut Random, buf: &mut [u8]) {
     let len = buf.len();

@@ -10,9 +10,6 @@
 //! The original works with pointers; here a place is an offset into the whole input, and a
 //! byte at `pos` has the index `pos + base`.
 
-// (The arithmetic is written as the original has it.)
-#![allow(clippy::implicit_saturating_sub, clippy::manual_is_multiple_of)]
-
 use super::common::{highbit32, read32};
 use super::hist;
 use super::zstd_compress::{
@@ -343,7 +340,7 @@ fn insert_bt1(
     let mut common_length_larger = 0usize;
     let base = ms.window.base as usize;
     let curr = (ip + base) as u32;
-    let bt_low = if bt_mask >= curr { 0 } else { curr - bt_mask };
+    let bt_low = curr.saturating_sub(bt_mask);
     let mut smaller_ptr = 2 * (curr & bt_mask) as usize;
     let mut larger_ptr = smaller_ptr + 1;
     // windowLow is based on target because we only need positions that will be in the
@@ -460,7 +457,7 @@ fn insert_bt_and_get_all_matches(
     let mut common_length_smaller = 0usize;
     let mut common_length_larger = 0usize;
     let dict_limit = ms.window.dict_limit;
-    let bt_low = if bt_mask >= curr { 0 } else { curr - bt_mask };
+    let bt_low = curr.saturating_sub(bt_mask);
     let window_low = get_lowest_match_index(ms, curr, ms.cparams.window_log);
     let match_low = if window_low != 0 { window_low } else { 1 };
     let mut smaller_ptr = 2 * (curr & bt_mask) as usize;
@@ -691,11 +688,7 @@ impl OptLdm<'_> {
         let curr_seq = self.seq[self.at.pos];
         let curr_block_end_pos = curr_pos_in_block + block_bytes_remaining;
         let pos_in_sequence = self.at.pos_in_sequence as u32;
-        let literals_bytes_remaining = if pos_in_sequence < curr_seq.lit_length {
-            curr_seq.lit_length - pos_in_sequence
-        } else {
-            0
-        };
+        let literals_bytes_remaining = curr_seq.lit_length.saturating_sub(pos_in_sequence);
         let match_bytes_remaining = if literals_bytes_remaining == 0 {
             curr_seq.match_length - (pos_in_sequence - curr_seq.lit_length)
         } else {
@@ -926,6 +919,7 @@ pub(crate) fn compress_block_opt(
                         opt[pos as usize].litlen = litlen + pos;
                         pos += 1;
                     }
+                    #[allow(clippy::needless_range_loop)] // (the index is cheaper here)
                     for match_nb in 0..nb_matches as usize {
                         let off_base = matches[match_nb].off;
                         let end = matches[match_nb].len;
@@ -1163,10 +1157,10 @@ pub(crate) fn compress_block_opt(
             }
 
             // save sequences
-            for store_pos in store_start..=store_end {
-                let llen = opt[store_pos].litlen as usize;
-                let mlen = opt[store_pos].mlen;
-                let off_base = opt[store_pos].off;
+            for stored in &opt[store_start..=store_end] {
+                let llen = stored.litlen as usize;
+                let mlen = stored.mlen;
+                let off_base = stored.off;
                 let advance = llen + mlen as usize;
                 if mlen == 0 {
                     // only literals => must be last "sequence", actually starting a new
