@@ -1,0 +1,17 @@
+zstd_compress_more_small 10 41c791a6458df703
+zstd_compress_more_small 20 d1af235089422488
+zstd_compress_more_small 30 3397c7b75a1d40d0
+zstd_compress_more_small 40 e1311424c94df54a
+zstd_compress_more_small 50 2a24014550793dd7
+zstd_compress_more_small 60 76e59996e6b8603c
+zstd_compress_more_small 70 1c9b29e67e6e3aea
+zstd_compress_more_small 80 5686654695d6209f
+zstd_compress_more_small 90 600baae438a765bc
+zstd_compress_more_small 100 22c75756593314f0
+zstd_compress_more_small 110 76332452c0beb27d
+zstd_compress_more_small 120 b4637e3b6931bb8a
+zstd_compress_more_small 130 2cb90594a6e98d15
+zstd_compress_more_small 140 af8b32139ac4f555
+zstd_compress_more_small 150 acc2690eebe728b7
+zstd_compress_more_small 160 9b405084eb8e3971
+zstd_compress_more_small bytes: 2273191; bytes of frames: 963681

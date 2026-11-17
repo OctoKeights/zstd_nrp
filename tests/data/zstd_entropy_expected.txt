@@ -1,0 +1,5 @@
+zstd_entropy 1000 f8ae62b2e5633556
+zstd_entropy 2000 21658f3d81753792
+zstd_entropy 3000 20a2c33373bf5a19
+zstd_entropy 4000 6c49c13dd2ed0763
+zstd_entropy outputs: 3105, refused: 895

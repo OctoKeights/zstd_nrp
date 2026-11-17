@@ -1,0 +1,21 @@
+zstd_compress_small 10 3e56771b2e64c580
+zstd_compress_small 20 89b446c55f164bb3
+zstd_compress_small 30 9b61e7e612647dc7
+zstd_compress_small 40 6df3124a8df4b71b
+zstd_compress_small 50 506ca3132d44d6bb
+zstd_compress_small 60 8ccf4b6d3d54d725
+zstd_compress_small 70 bdc59972655f8a73
+zstd_compress_small 80 5bfbc977b4a2cafd
+zstd_compress_small 90 874ec646c9e6db2c
+zstd_compress_small 100 d23695de37ea08ac
+zstd_compress_small 110 aeea6abb2163f4bd
+zstd_compress_small 120 707cb1ecc0367483
+zstd_compress_small 130 b1b4725aa08e5569
+zstd_compress_small 140 a15095b74bc0c493
+zstd_compress_small 150 a6b79e550b928d5b
+zstd_compress_small 160 6aa63961dc2ba707
+zstd_compress_small 170 34dfb538750c76c7
+zstd_compress_small 180 717dd5cfe23ad6c4
+zstd_compress_small 190 0a1004a586bf1b44
+zstd_compress_small 200 39c60756f0774190
+zstd_compress_small bytes: 9112182; bytes of frames: 3342372
