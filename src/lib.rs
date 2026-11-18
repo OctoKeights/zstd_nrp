@@ -75,6 +75,7 @@ impl Level {
 
     /// The level `level`, if it is from [`Level::MIN`] to [`Level::MAX`]. Level 0 is the
     /// default level, as zstd takes it.
+    #[must_use]
     pub const fn new(level: i32) -> Option<Level> {
         match level {
             0 => Some(Level::DEFAULT),
@@ -84,6 +85,7 @@ impl Level {
     }
 
     /// The level as a number.
+    #[must_use]
     pub const fn get(self) -> i32 {
         self.0
     }
@@ -125,12 +127,16 @@ impl std::error::Error for UnsupportedLevel {}
 pub enum CompressError {
     /// The data is 2 GiB or more, which this port does not compress in one frame.
     SourceTooLarge,
+    /// The compressor ran out of room in an output of `ZSTD_compressBound` bytes, which no
+    /// input should make it do; this would be a bug in the port.
+    Internal,
 }
 
 impl fmt::Display for CompressError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             CompressError::SourceTooLarge => "the data is too large to compress (2 GiB or more)",
+            CompressError::Internal => "the compressor failed (a bug in zstd_nrp)",
         })
     }
 }

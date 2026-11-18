@@ -24,6 +24,8 @@ enum Found {
 /// `ZSTD_compressBlock_fast`: the sequences of the block `src[istart..istart + src_size]`
 /// go to `seq_store`. The answer is how many bytes at the end of the block no sequence
 /// covers.
+// (One match-finding loop, as zstd's, its state shared throughout.)
+#[allow(clippy::too_many_lines)]
 pub(crate) fn compress_block_fast(
     ms: &mut MatchState,
     seq_store: &mut SeqStore,
@@ -32,6 +34,8 @@ pub(crate) fn compress_block_fast(
     istart: usize,
     src_size: usize,
 ) -> usize {
+    const BASE: usize = ZSTD_WINDOW_START_INDEX as usize;
+    const K_STEP_INCR: usize = 1 << (K_SEARCH_STRENGTH - 1);
     // (The original has one copy of the function per minimum match, and two ways to read a
     // candidate, with a branch or without; they give the same matches.)
     let mls = match ms.cparams.min_match {
@@ -44,7 +48,6 @@ pub(crate) fn compress_block_fast(
     let step_size =
         (ms.cparams.target_length + u32::from(ms.cparams.target_length == 0) + 1) as usize;
     // `base + index` is `index - BASE` here, and `ptr - base` is `ptr + BASE`.
-    const BASE: usize = ZSTD_WINDOW_START_INDEX as usize;
     let end_index = (istart + BASE + src_size) as u32;
     let prefix_start_index = get_lowest_prefix_index(ms, end_index, window_log);
     let prefix_start = prefix_start_index as usize - BASE;
@@ -59,8 +62,6 @@ pub(crate) fn compress_block_fast(
     let mut rep_offset2 = rep[1];
     let mut offset_saved1 = 0u32;
     let mut offset_saved2 = 0u32;
-
-    const K_STEP_INCR: usize = 1 << (K_SEARCH_STRENGTH - 1);
 
     ip0 += usize::from(ip0 == prefix_start);
     {
@@ -116,7 +117,7 @@ pub(crate) fn compress_block_fast(
             hash_table[hash0] = current0;
 
             // Check the repeat offset at ip[2].
-            if (read32(src, ip2) == rval) & (rep_offset1 > 0) {
+            if (read32(src, ip2) == rval) && (rep_offset1 > 0) {
                 ip0 = ip2;
                 match0 = ip0 - rep_offset1 as usize;
                 m_length = usize::from(src[ip0 - 1] == src[match0 - 1]);
@@ -204,8 +205,7 @@ pub(crate) fn compress_block_fast(
                 m_length = 4;
 
                 // Count the backwards match length.
-                while ((ip0 > anchor) & (match0 > prefix_start))
-                    && (src[ip0 - 1] == src[match0 - 1])
+                while (ip0 > anchor) && (match0 > prefix_start) && (src[ip0 - 1] == src[match0 - 1])
                 {
                     ip0 -= 1;
                     match0 -= 1;

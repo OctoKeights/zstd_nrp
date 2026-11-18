@@ -8,7 +8,7 @@ use super::common::CError;
 use super::fse_compress::{self, FseCTable};
 use super::huf_compress::{self, HufCTable, HufCompressTables, HufNbStreams, HufRepeat};
 use super::zstd_compress::Strategy;
-use super::zstd_compress_literals::{HufCTables, compress_literals};
+use super::zstd_compress_literals::{HufCTables, LiteralOptions, compress_literals};
 
 fn code(error: CError) -> u32 {
     match error {
@@ -22,11 +22,13 @@ fn code(error: CError) -> u32 {
 
 /// The number of the strategy (`ZSTD_strategy`) that `level` takes for a source of
 /// `src_size` bytes: 1 for `ZSTD_fast` to 9 for `ZSTD_btultra2`.
+#[must_use]
 pub fn strategy_of(level: i32, src_size: usize) -> u32 {
     super::zstd_compress::get_cparams_internal(level, src_size as u64).strategy as u32
 }
 
 /// `FSE_optimalTableLog`.
+#[must_use]
 pub fn fse_optimal_table_log(max_table_log: u32, src_size: usize, max_symbol_value: u32) -> u32 {
     fse_compress::optimal_table_log(max_table_log, src_size, max_symbol_value)
 }
@@ -115,18 +117,21 @@ impl Huf {
         } else {
             HufNbStreams::Single
         };
+        let params = huf_compress::HufParams {
+            max_symbol_value: 255,
+            max_log: 11,
+            nb_streams,
+            prefer_repeat,
+            suspect_uncompressible,
+            optimal_depth: false,
+        };
         let answer = huf_compress::compress_repeat(
             dst,
             src,
-            255,
-            11,
-            nb_streams,
+            params,
             &mut self.tables,
             &mut self.old,
             &mut mode,
-            prefer_repeat,
-            suspect_uncompressible,
-            false,
         );
         *repeat = mode as u32;
         answer.map_err(code)
@@ -171,20 +176,24 @@ impl Literals {
         } else {
             Strategy::Dfast
         };
+        let options = LiteralOptions {
+            strategy,
+            disable_compression: disable_literal_compression,
+            suspect_uncompressible,
+        };
         compress_literals(
             dst,
             src,
             &mut self.tables,
             &self.prev,
             &mut self.next,
-            strategy,
-            disable_literal_compression,
-            suspect_uncompressible,
+            options,
         )
         .map_err(code)
     }
 
     /// The `repeatMode` of the tables for the next block.
+    #[must_use]
     pub fn next_repeat_mode(&self) -> u32 {
         self.next.repeat_mode as u32
     }

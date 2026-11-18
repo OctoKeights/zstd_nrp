@@ -20,12 +20,12 @@ use super::fse_compress::FseCTable;
 use super::hist;
 use super::huf_compress::{HufCompressTables, HufRepeat};
 use super::zstd_compress_literals::{
-    HufCTables, build_block_entropy_stats_literals, compress_literals, estimate_block_size_literal,
+    HufCTables, LiteralOptions, build_block_entropy_stats_literals, compress_literals,
+    estimate_block_size_literal,
 };
 use super::zstd_compress_sequences::{
-    self as sequences, DEFAULT_MAX_OFF, FseRepeat, LL_BITS, LL_DEFAULT_NORM, LL_DEFAULT_NORM_LOG,
-    LL_FSE_LOG, MAX_LL, MAX_ML, MAX_OFF, MAX_SEQ, ML_BITS, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG,
-    ML_FSE_LOG, OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG, OFF_FSE_LOG,
+    self as sequences, CodedSymbols, FseRepeat, LITERAL_LENGTHS, LL_FSE_LOG, MATCH_LENGTHS, MAX_LL,
+    MAX_ML, MAX_OFF, MAX_SEQ, ML_FSE_LOG, OFF_FSE_LOG, OFFSETS, SymbolType, TableState,
 };
 use super::zstd_double_fast::compress_block_double_fast;
 use super::zstd_fast::compress_block_fast;
@@ -36,7 +36,7 @@ use super::zstd_presplit::split_block;
 use super::{CompressError, Level};
 
 // From `lib/zstd.h` and `lib/common/zstd_internal.h`.
-const ZSTD_MAGICNUMBER: u32 = 0xFD2FB528;
+const ZSTD_MAGICNUMBER: u32 = 0xFD2F_B528;
 const ZSTD_WINDOWLOG_MAX: u32 = 31;
 const ZSTD_WINDOWLOG_ABSOLUTEMIN: u32 = 10;
 const ZSTD_HASHLOG_MIN: u32 = 6;
@@ -110,6 +110,7 @@ pub(crate) struct CompressionParameters {
 /// `ZSTD_COMPRESSBOUND`: the most bytes a frame can take for a source of `src_size` bytes.
 /// It is what [`compress`] gives its output to start with, as the bytes depend on the room
 /// there is in a few places.
+#[must_use]
 pub fn compress_bound(src_size: usize) -> usize {
     src_size
         + (src_size >> 8)
@@ -126,12 +127,12 @@ fn adjust_cparams_internal(
     mut c_par: CompressionParameters,
     src_size: u64,
 ) -> CompressionParameters {
+    const HASH_SIZE_MIN: u32 = 1 << ZSTD_HASHLOG_MIN;
     const MAX_WINDOW_RESIZE: u64 = 1 << (ZSTD_WINDOWLOG_MAX - 1);
 
     // Resize windowLog if the input is small enough, to use less memory.
     if src_size <= MAX_WINDOW_RESIZE {
         let t_size = src_size as u32;
-        const HASH_SIZE_MIN: u32 = 1 << ZSTD_HASHLOG_MIN;
         let src_log = if t_size < HASH_SIZE_MIN {
             ZSTD_HASHLOG_MIN
         } else {
@@ -228,7 +229,7 @@ pub(crate) fn ll_code(lit_length: u32) -> u32 {
     if lit_length > 63 {
         highbit32(lit_length) + LL_DELTA_CODE
     } else {
-        LL_CODE[lit_length as usize] as u32
+        u32::from(LL_CODE[lit_length as usize])
     }
 }
 
@@ -249,7 +250,7 @@ pub(crate) fn ml_code(ml_base: u32) -> u32 {
     if ml_base > 127 {
         highbit32(ml_base) + ML_DELTA_CODE
     } else {
-        ML_CODE[ml_base as usize] as u32
+        u32::from(ML_CODE[ml_base as usize])
     }
 }
 
@@ -367,9 +368,9 @@ impl SeqStore {
             .iter()
             .enumerate()
         {
-            self.ll_code[chunk.seq_start + i] = ll_code(seq.lit_length as u32) as u8;
+            self.ll_code[chunk.seq_start + i] = ll_code(u32::from(seq.lit_length)) as u8;
             self.of_code[chunk.seq_start + i] = highbit32(seq.off_base) as u8;
-            self.ml_code[chunk.seq_start + i] = ml_code(seq.ml_base as u32) as u8;
+            self.ml_code[chunk.seq_start + i] = ml_code(u32::from(seq.ml_base)) as u8;
         }
         if chunk.long_length_type == LongLengthType::LiteralLength {
             self.ll_code[chunk.seq_start + chunk.long_length_pos as usize] = MAX_LL as u8;
@@ -615,11 +616,11 @@ pub(crate) fn count(src: &[u8], mut p_in: usize, mut p_match: usize, p_in_limit:
     p_in - p_start
 }
 
-const PRIME_4_BYTES: u32 = 2654435761;
-const PRIME_5_BYTES: u64 = 889523592379;
-const PRIME_6_BYTES: u64 = 227718039650203;
-const PRIME_7_BYTES: u64 = 58295818150454627;
-const PRIME_8_BYTES: u64 = 0xCF1BBCDCB7A56463;
+const PRIME_4_BYTES: u32 = 2_654_435_761;
+const PRIME_5_BYTES: u64 = 889_523_592_379;
+const PRIME_6_BYTES: u64 = 227_718_039_650_203;
+const PRIME_7_BYTES: u64 = 58_295_818_150_454_627;
+const PRIME_8_BYTES: u64 = 0xCF1B_BCDC_B7A5_6463;
 
 /// `ZSTD_hashPtr`: the hash, of `h_bits` bits, of the `mls` bytes at `pos`.
 #[inline]
@@ -665,16 +666,16 @@ pub(crate) fn hash_ptr_salted(src: &[u8], pos: usize, h_bits: u32, mls: u32, sal
 /// `ZSTD_hash3Ptr`: the hash, of `h_bits` bits, of the three bytes at `pos`.
 #[inline]
 pub(crate) fn hash3_ptr(src: &[u8], pos: usize, h_bits: u32) -> usize {
-    const PRIME_3_BYTES: u32 = 506832829;
+    const PRIME_3_BYTES: u32 = 506_832_829;
     ((read32(src, pos) << (32 - 24)).wrapping_mul(PRIME_3_BYTES) >> (32 - h_bits)) as usize
 }
 
 /// `ZSTD_bitmix`: the bits of a value mixed, as XXH3's `rrmxmx` mixes them.
 fn bitmix(mut val: u64, len: u64) -> u64 {
     val ^= val.rotate_right(49) ^ val.rotate_right(24);
-    val = val.wrapping_mul(0x9FB21C651E98DF25);
+    val = val.wrapping_mul(0x9FB2_1C65_1E98_DF25);
     val ^= (val >> 35).wrapping_add(len);
-    val = val.wrapping_mul(0x9FB21C651E98DF25);
+    val = val.wrapping_mul(0x9FB2_1C65_1E98_DF25);
     val ^ (val >> 28)
 }
 
@@ -759,6 +760,48 @@ struct SymbolEncodingTypeStats {
     last_count_size: usize,
 }
 
+/// One of the three codes of the sequences.
+#[derive(Clone, Copy)]
+enum Code {
+    LiteralLengths,
+    Offsets,
+    MatchLengths,
+}
+
+impl Code {
+    fn symbol_type(self) -> &'static SymbolType {
+        match self {
+            Code::LiteralLengths => &LITERAL_LENGTHS,
+            Code::Offsets => &OFFSETS,
+            Code::MatchLengths => &MATCH_LENGTHS,
+        }
+    }
+
+    /// The code's table in `prev`, and the one to make in `next`.
+    fn tables<'a>(self, prev: &'a FseCTables, next: &'a mut FseCTables) -> TableState<'a> {
+        match self {
+            Code::LiteralLengths => TableState {
+                prev: &prev.litlength_ctable,
+                prev_repeat: prev.litlength_repeat_mode,
+                next: &mut next.litlength_ctable,
+                next_repeat: &mut next.litlength_repeat_mode,
+            },
+            Code::Offsets => TableState {
+                prev: &prev.offcode_ctable,
+                prev_repeat: prev.offcode_repeat_mode,
+                next: &mut next.offcode_ctable,
+                next_repeat: &mut next.offcode_repeat_mode,
+            },
+            Code::MatchLengths => TableState {
+                prev: &prev.matchlength_ctable,
+                prev_repeat: prev.matchlength_repeat_mode,
+                next: &mut next.matchlength_ctable,
+                next_repeat: &mut next.matchlength_repeat_mode,
+            },
+        }
+    }
+}
+
 /// `ZSTD_buildSequencesStatistics`: the kinds of the three tables of the sequences, the
 /// tables themselves in `next_entropy`, and what describes them in `dst`.
 fn build_sequences_statistics(
@@ -786,128 +829,29 @@ fn build_sequences_statistics(
     let ll_code_table = &seq_store.ll_code[chunk.seq_start..chunk.seq_end];
     let ml_code_table = &seq_store.ml_code[chunk.seq_start..chunk.seq_end];
 
-    // Build the table for the literal lengths.
-    {
-        let mut max = MAX_LL;
-        let most_frequent =
-            hist::count_simple(count_workspace, &mut max, &ll_code_table[..nb_seq]) as usize;
-        next_entropy.litlength_repeat_mode = prev_entropy.litlength_repeat_mode;
-        stats.ll_type = sequences::select_encoding_type(
-            &mut next_entropy.litlength_repeat_mode,
+    // The tables of the literal lengths, the offsets and the match lengths, in that order.
+    for (code, codes) in [
+        (Code::LiteralLengths, ll_code_table),
+        (Code::Offsets, of_code_table),
+        (Code::MatchLengths, ml_code_table),
+    ] {
+        let (encoding_type, count_size) = sequences::encode_symbol_table(
+            code.symbol_type(),
+            &codes[..nb_seq],
+            code.tables(prev_entropy, next_entropy),
             count_workspace,
-            max,
-            most_frequent,
-            nb_seq,
-            LL_FSE_LOG,
-            &prev_entropy.litlength_ctable,
-            &LL_DEFAULT_NORM,
-            LL_DEFAULT_NORM_LOG,
-            true,
             strategy,
-        );
-        {
-            let count_size = sequences::build_ctable(
-                &mut dst[op..],
-                &mut next_entropy.litlength_ctable,
-                LL_FSE_LOG,
-                stats.ll_type,
-                count_workspace,
-                max,
-                ll_code_table,
-                nb_seq,
-                &LL_DEFAULT_NORM,
-                LL_DEFAULT_NORM_LOG,
-                MAX_LL,
-                &prev_entropy.litlength_ctable,
-            )?;
-            if stats.ll_type == SET_COMPRESSED {
-                stats.last_count_size = count_size;
-            }
-            op += count_size;
+            &mut dst[op..],
+        )?;
+        match code {
+            Code::LiteralLengths => stats.ll_type = encoding_type,
+            Code::Offsets => stats.off_type = encoding_type,
+            Code::MatchLengths => stats.ml_type = encoding_type,
         }
-    }
-    // Build the table for the offsets.
-    {
-        let mut max = MAX_OFF;
-        let most_frequent =
-            hist::count_simple(count_workspace, &mut max, &of_code_table[..nb_seq]) as usize;
-        // We can only use the basic table if max <= DefaultMaxOff, otherwise the offsets
-        // are too large.
-        let default_policy = max <= DEFAULT_MAX_OFF;
-        next_entropy.offcode_repeat_mode = prev_entropy.offcode_repeat_mode;
-        stats.off_type = sequences::select_encoding_type(
-            &mut next_entropy.offcode_repeat_mode,
-            count_workspace,
-            max,
-            most_frequent,
-            nb_seq,
-            OFF_FSE_LOG,
-            &prev_entropy.offcode_ctable,
-            &OF_DEFAULT_NORM,
-            OF_DEFAULT_NORM_LOG,
-            default_policy,
-            strategy,
-        );
-        {
-            let count_size = sequences::build_ctable(
-                &mut dst[op..],
-                &mut next_entropy.offcode_ctable,
-                OFF_FSE_LOG,
-                stats.off_type,
-                count_workspace,
-                max,
-                of_code_table,
-                nb_seq,
-                &OF_DEFAULT_NORM,
-                OF_DEFAULT_NORM_LOG,
-                DEFAULT_MAX_OFF,
-                &prev_entropy.offcode_ctable,
-            )?;
-            if stats.off_type == SET_COMPRESSED {
-                stats.last_count_size = count_size;
-            }
-            op += count_size;
+        if encoding_type == SET_COMPRESSED {
+            stats.last_count_size = count_size;
         }
-    }
-    // Build the table for the match lengths.
-    {
-        let mut max = MAX_ML;
-        let most_frequent =
-            hist::count_simple(count_workspace, &mut max, &ml_code_table[..nb_seq]) as usize;
-        next_entropy.matchlength_repeat_mode = prev_entropy.matchlength_repeat_mode;
-        stats.ml_type = sequences::select_encoding_type(
-            &mut next_entropy.matchlength_repeat_mode,
-            count_workspace,
-            max,
-            most_frequent,
-            nb_seq,
-            ML_FSE_LOG,
-            &prev_entropy.matchlength_ctable,
-            &ML_DEFAULT_NORM,
-            ML_DEFAULT_NORM_LOG,
-            true,
-            strategy,
-        );
-        {
-            let count_size = sequences::build_ctable(
-                &mut dst[op..],
-                &mut next_entropy.matchlength_ctable,
-                ML_FSE_LOG,
-                stats.ml_type,
-                count_workspace,
-                max,
-                ml_code_table,
-                nb_seq,
-                &ML_DEFAULT_NORM,
-                ML_DEFAULT_NORM_LOG,
-                MAX_ML,
-                &prev_entropy.matchlength_ctable,
-            )?;
-            if stats.ml_type == SET_COMPRESSED {
-                stats.last_count_size = count_size;
-            }
-            op += count_size;
-        }
+        op += count_size;
     }
     stats.size = op;
     Ok(stats)
@@ -976,19 +920,17 @@ struct FseMetadata {
 
 /// `ZSTD_estimateBlockSize_symbolType`: the size of the codes of one kind (and their extra
 /// bits) with a table of the kind `encoding_type`.
-#[allow(clippy::too_many_arguments)]
 fn estimate_block_size_symbol_type(
+    kind: &SymbolType,
     encoding_type: u32,
     code_table: &[u8],
-    max_code: u32,
     fse_ctable: &FseCTable,
-    additional_bits: Option<&[u8]>,
-    default_norm: &[i16],
-    default_norm_log: u32,
     count: &mut [u32; MAX_SEQ + 1],
 ) -> usize {
     let nb_seq = code_table.len();
-    let mut max = max_code;
+    let mut max = kind.max;
+    let (default_norm, default_norm_log) = (kind.default_norm, kind.default_norm_log);
+    let additional_bits = kind.extra_bits;
     let mut c_symbol_type_size_estimate_in_bits = 0usize;
 
     hist::count_simple(count, &mut max, code_table); // can't fail
@@ -1153,15 +1095,18 @@ impl CCtx {
             let suspect_uncompressible = (num_sequences == 0)
                 || (lit_size / num_sequences >= SUSPECT_UNCOMPRESSIBLE_LITERAL_RATIO);
 
+            let options = LiteralOptions {
+                strategy,
+                disable_compression: disable_literal_compression,
+                suspect_uncompressible,
+            };
             let c_size = compress_literals(
                 dst,
                 literals,
                 &mut self.huf_workspace,
                 &prev_entropy.huf,
                 &mut next_entropy.huf,
-                strategy,
-                disable_literal_compression,
-                suspect_uncompressible,
+                options,
             )?;
             op += c_size;
         }
@@ -1209,15 +1154,15 @@ impl CCtx {
         }
 
         {
+            let range = chunk.seq_start..chunk.seq_end;
+            let fse = &next_entropy.fse;
+            let coded = |ctable, codes| CodedSymbols { ctable, codes };
             let bitstream_size = sequences::encode_sequences(
                 &mut dst[op..],
-                &next_entropy.fse.matchlength_ctable,
-                &seq_store.ml_code[chunk.seq_start..chunk.seq_end],
-                &next_entropy.fse.offcode_ctable,
-                &seq_store.of_code[chunk.seq_start..chunk.seq_end],
-                &next_entropy.fse.litlength_ctable,
-                &seq_store.ll_code[chunk.seq_start..chunk.seq_end],
-                &seq_store.sequences[chunk.seq_start..chunk.seq_end],
+                &coded(&fse.matchlength_ctable, &seq_store.ml_code[range.clone()]),
+                &coded(&fse.offcode_ctable, &seq_store.of_code[range.clone()]),
+                &coded(&fse.litlength_ctable, &seq_store.ll_code[range.clone()]),
+                &seq_store.sequences[range],
             )?;
             op += bitstream_size;
             // zstd versions <= 1.3.4 mistakenly report corruption when FSE_readNCount()
@@ -1262,6 +1207,8 @@ impl CCtx {
 
     /// `ZSTD_buildSeqStore`: the sequences of the block `src[ip..ip + src_size]`. `false`
     /// (`ZSTDbss_noCompress`) for a block too small to be worth it.
+    // (Follows zstd's function step for step.)
+    #[allow(clippy::too_many_lines)]
     fn build_seq_store(&mut self, src: &[u8], ip: usize, src_size: usize) -> CResult<bool> {
         let ms = &mut self.match_state;
         // Assert that we have correctly flushed the ctx params into the ms's copy.
@@ -1397,23 +1344,22 @@ impl CCtx {
         // This is the upper bound for the length of an rle block. This isn't the actual
         // upper bound; finding the real threshold needs further investigation.
         const RLE_MAX_LENGTH: usize = 25;
-        let c_size = if !self.build_seq_store(src, ip, src_size)? {
-            Ok(0)
-        } else {
+        let c_size = if self.build_seq_store(src, ip, src_size)? {
             // Encode the sequences into the block.
             let whole = self.seq_store.whole();
             let mut result = self.entropy_compress_seq_store(dst, src_size, &whole);
 
-            if frame &&
-                // We don't want to emit our first block as a RLE even if it qualifies because
-                // doing so will cause the decoder (cli only) to throw a "should consume all
-                // input" error. This is only an issue for zstd <= v1.4.3.
-                !self.is_first_block && matches!(result, Ok(size) if size < RLE_MAX_LENGTH) && is_rle(&src[ip..ip + src_size])
-            {
+            // We don't want to emit our first block as a RLE even if it qualifies because doing
+            // so will cause the decoder (cli only) to throw a "should consume all input" error.
+            // This is only an issue for zstd <= v1.4.3.
+            let small = matches!(result, Ok(size) if size < RLE_MAX_LENGTH);
+            if frame && !self.is_first_block && small && is_rle(&src[ip..ip + src_size]) {
                 result = Ok(1);
                 dst[0] = src[ip];
             }
             result
+        } else {
+            Ok(0)
         };
 
         // out:
@@ -1493,38 +1439,31 @@ impl CCtx {
         let seq_size = {
             // `ZSTD_estimateBlockSize_sequences`, with the tables' descriptions.
             let nb_seq = chunk.nb_seq();
-            let sequences_section_header_size = 1 /* seqHead */ + 1 /* min seqSize size */ + usize::from(nb_seq >= 128) + usize::from(nb_seq >= LONGNBSEQ);
+            // seqHead, the smallest size of the number of sequences, and its longer forms.
+            let sequences_section_header_size =
+                1 + 1 + usize::from(nb_seq >= 128) + usize::from(nb_seq >= LONGNBSEQ);
             let codes = chunk.seq_start..chunk.seq_end;
             let fse = &next_entropy.fse;
             let mut c_seq_size_estimate = 0;
             c_seq_size_estimate += estimate_block_size_symbol_type(
+                &OFFSETS,
                 fse_metadata.of_type,
                 &seq_store.of_code[codes.clone()],
-                MAX_OFF,
                 &fse.offcode_ctable,
-                None,
-                &OF_DEFAULT_NORM,
-                OF_DEFAULT_NORM_LOG,
                 &mut self.count,
             );
             c_seq_size_estimate += estimate_block_size_symbol_type(
+                &LITERAL_LENGTHS,
                 fse_metadata.ll_type,
                 &seq_store.ll_code[codes.clone()],
-                MAX_LL,
                 &fse.litlength_ctable,
-                Some(&LL_BITS),
-                &LL_DEFAULT_NORM,
-                LL_DEFAULT_NORM_LOG,
                 &mut self.count,
             );
             c_seq_size_estimate += estimate_block_size_symbol_type(
+                &MATCH_LENGTHS,
                 fse_metadata.ml_type,
                 &seq_store.ml_code[codes],
-                MAX_ML,
                 &fse.matchlength_ctable,
-                Some(&ML_BITS),
-                &ML_DEFAULT_NORM,
-                ML_DEFAULT_NORM_LOG,
                 &mut self.count,
             );
             c_seq_size_estimate += fse_metadata.fse_tables_size;
@@ -1650,6 +1589,7 @@ impl CCtx {
 
     /// `ZSTD_compressSeqStore_singleBlock`: a chunk of the sequences as a block with its
     /// header, for the source `src[ip..ip + src_size]`.
+    // (Zstd's parameters for a block.)
     #[allow(clippy::too_many_arguments)]
     fn compress_seq_store_single_block(
         &mut self,
@@ -1721,7 +1661,7 @@ impl CCtx {
     ) {
         const MIN_SEQUENCES_BLOCK_SPLITTING: usize = 300;
         const ZSTD_MAX_NB_BLOCK_SPLITS: usize = 196;
-        let mid_idx = (start_idx + end_idx) / 2;
+        let mid_idx = start_idx.midpoint(end_idx);
 
         if end_idx - start_idx < MIN_SEQUENCES_BLOCK_SPLITTING
             || splits.len() >= ZSTD_MAX_NB_BLOCK_SPLITS
@@ -1966,11 +1906,11 @@ impl CCtx {
     /// dictionary.
     fn write_frame_header(&self, dst: &mut [u8], pledged_src_size: u64) -> CResult<usize> {
         let window_size = 1u32 << self.cparams.window_log;
-        let single_segment = window_size as u64 >= pledged_src_size;
+        let single_segment = u64::from(window_size) >= pledged_src_size;
         let window_log_byte = ((self.cparams.window_log - ZSTD_WINDOWLOG_ABSOLUTEMIN) << 3) as u8;
         let fcs_code = u32::from(pledged_src_size >= 256)
             + u32::from(pledged_src_size >= 65536 + 256)
-            + u32::from(pledged_src_size >= 0xFFFFFFFF);
+            + u32::from(pledged_src_size >= 0xFFFF_FFFF);
         let frame_header_description_byte =
             ((u32::from(single_segment) << 5) + (fcs_code << 6)) as u8;
         let mut pos = 0usize;
@@ -2043,8 +1983,12 @@ impl CCtx {
 /// Compresses `data` to one Zstandard frame at `level` (`ZSTD_compress`).
 ///
 /// The frame is byte for byte the one libzstd v1.5.7 gives for
-/// `ZSTD_compress(dst, ZSTD_compressBound(n), data, n, level)`. Fails for data of 2 GiB or
-/// more, which this port does not compress.
+/// `ZSTD_compress(dst, ZSTD_compressBound(n), data, n, level)`.
+///
+/// # Errors
+///
+/// [`CompressError::SourceTooLarge`] for data of 2 GiB or more, which this port does not
+/// compress.
 pub fn compress(data: &[u8], level: Level) -> Result<Vec<u8>, CompressError> {
     if data.len() >= 1usize << 31 {
         return Err(CompressError::SourceTooLarge);
@@ -2052,9 +1996,10 @@ pub fn compress(data: &[u8], level: Level) -> Result<Vec<u8>, CompressError> {
     let cparams = get_cparams_internal(level.get(), data.len() as u64);
     let mut dst = vec![0u8; compress_bound(data.len())];
     let mut cctx = CCtx::new(cparams, data.len() as u64);
+    // (An output of `compress_bound` bytes has room for any source.)
     let size = cctx
         .compress_end(&mut dst, data)
-        .expect("an output of `compress_bound` bytes has room for any source");
+        .map_err(|_| CompressError::Internal)?;
     dst.truncate(size);
     Ok(dst)
 }
@@ -2069,8 +2014,8 @@ mod tests {
         (0..len)
             .map(|_| {
                 state = state
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
                 (state >> 56) as u8 & mask
             })
             .collect()

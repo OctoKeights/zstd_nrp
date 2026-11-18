@@ -13,7 +13,7 @@ const THRESHOLD_PENALTY: i32 = 3;
 const HASHLENGTH: usize = 2;
 const HASHLOG_MAX: u32 = 10;
 const HASHTABLESIZE: usize = 1 << HASHLOG_MAX;
-const KNUTH: u32 = 0x9e3779b9;
+const KNUTH: u32 = 0x9e37_79b9;
 
 /// `hash2`. hashLog == 8: just take the byte, no hashing.
 #[inline]
@@ -21,7 +21,7 @@ fn hash2(p: &[u8], pos: usize, hash_log: u32) -> usize {
     if hash_log == 8 {
         return p[pos] as usize;
     }
-    ((read16(p, pos) as u32).wrapping_mul(KNUTH) >> (32 - hash_log)) as usize
+    (u32::from(read16(p, pos)).wrapping_mul(KNUTH) >> (32 - hash_log)) as usize
 }
 
 /// `Fingerprint`.
@@ -66,9 +66,9 @@ fn fp_distance(fp1: &Fingerprint, fp2: &Fingerprint, hash_log: u32) -> u64 {
     let mut distance = 0u64;
     for n in 0..1usize << hash_log {
         distance = distance.wrapping_add(abs64(
-            (fp1.events[n] as i64)
+            i64::from(fp1.events[n])
                 .wrapping_mul(fp2.nb_events as i64)
-                .wrapping_sub((fp2.events[n] as i64).wrapping_mul(fp1.nb_events as i64)),
+                .wrapping_sub(i64::from(fp2.events[n]).wrapping_mul(fp1.nb_events as i64)),
         ));
     }
     distance
@@ -120,11 +120,10 @@ fn split_block_by_chunks(block: &[u8], level: usize) -> usize {
         );
         if compare_fingerprints(&past_events, &new_events, penalty, hash_log) {
             return pos;
-        } else {
-            merge_events(&mut past_events, &new_events);
-            if penalty > 0 {
-                penalty -= 1;
-            }
+        }
+        merge_events(&mut past_events, &new_events);
+        if penalty > 0 {
+            penalty -= 1;
         }
         pos += CHUNKSIZE;
     }

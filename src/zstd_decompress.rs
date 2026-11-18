@@ -21,6 +21,7 @@ impl DecompressError {
 
     /// The reference decoder's message, such as `"Input buffer smaller than it should be or
     /// input corrupted"`.
+    #[must_use]
     pub fn message(&self) -> &'static str {
         self.message
     }
@@ -41,7 +42,7 @@ type R<T> = Result<T, DecompressError>;
 // Zstandard frame
 // "Magic_Number
 // 4 Bytes, little-endian format. Value : 0xFD2FB528"
-const ZSTD_MAGIC_NUMBER: u32 = 0xFD2FB528;
+const ZSTD_MAGIC_NUMBER: u32 = 0xFD2F_B528;
 
 // The size of `Block_Content` is limited by `Block_Maximum_Size`,
 const ZSTD_BLOCK_SIZE_MAX: usize = 128 * 1024;
@@ -74,7 +75,7 @@ struct OStream {
     len: usize,
 }
 
-/// `istream_t`: wraps the data passed into ZSTD_decompress, so that all IO operations are
+/// `istream_t`: wraps the data passed into `ZSTD_decompress`, so that all IO operations are
 /// safely bounds checked. They are read forward, and reads are treated as little-endian.
 #[derive(Clone, Copy)]
 struct IStream<'a> {
@@ -401,7 +402,7 @@ pub struct Dictionary {
     // Offset history to prepopulate the frame's history
     previous_offsets: [u64; 3],
 
-    dictionary_id: u32,
+    id: u32,
 }
 
 /// `sequence_command_t`: a tuple containing the parts necessary to decode and execute a ZSTD
@@ -415,12 +416,23 @@ struct SequenceCommand {
 
 /// Decompresses a Zstandard frame that holds no more than `max_len` bytes
 /// (`ZSTD_decompress`). Anything after the frame is ignored.
+///
+/// # Errors
+///
+/// A [`DecompressError`], whose message is the reference decoder's, if the frame is not a
+/// valid one, is cut short, or holds more than `max_len` bytes.
 pub fn decompress(frame: &[u8], max_len: usize) -> Result<Vec<u8>, DecompressError> {
     decompress_with_dict(frame, max_len, &Dictionary::default())
 }
 
 /// Decompresses a Zstandard frame compressed with a dictionary, that holds no more than
 /// `max_len` bytes (`ZSTD_decompress_with_dict`).
+///
+/// # Errors
+///
+/// A [`DecompressError`], whose message is the reference decoder's, if the frame is not a
+/// valid one, is cut short, or holds more than `max_len` bytes, or was
+/// compressed with another dictionary.
 pub fn decompress_with_dict(
     frame: &[u8],
     max_len: usize,
@@ -726,16 +738,13 @@ fn decode_literals_simple(input: &mut IStream, block_type: i32, size_format: i32
         return corruption();
     }
 
-    match block_type {
-        0 => {
-            // "Raw_Literals_Block - Literals are stored uncompressed."
-            Ok(input.get_read_ptr(size)?.to_vec())
-        }
-        _ => {
-            // "RLE_Literals_Block - Literals consist of a single byte value repeated N times."
-            let read_ptr = input.get_read_ptr(1)?;
-            Ok(vec![read_ptr[0]; size])
-        }
+    if block_type == 0 {
+        // "Raw_Literals_Block - Literals are stored uncompressed."
+        Ok(input.get_read_ptr(size)?.to_vec())
+    } else {
+        // "RLE_Literals_Block - Literals consist of a single byte value repeated N times."
+        let read_ptr = input.get_read_ptr(1)?;
+        Ok(vec![read_ptr[0]; size])
     }
 }
 
@@ -883,7 +892,7 @@ struct SequenceStates<'t> {
     ml_state: u16,
 }
 
-/// `seq_part_t`: different modes to signal to decode_seq_tables what to do
+/// `seq_part_t`: different modes to signal to `decode_seq_tables` what to do
 #[derive(Clone, Copy)]
 enum SeqPart {
     LiteralLength = 0,
@@ -1134,16 +1143,16 @@ fn decode_sequence(
 
 /// `decode_seq_table`: given a sequence part and table mode, decode the FSE distribution
 fn decode_seq_table(table: &mut FseDtable, input: &mut IStream, part: SeqPart, mode: u8) -> R<()> {
+    const DEFAULT_DISTRIBUTION_ACCURACIES: [i32; 3] = [6, 5, 6];
+    const MAX_ACCURACIES: [i32; 3] = [9, 8, 9];
     // Constant arrays indexed by seq_part_t
     let default_distributions: [&[i16]; 3] = [
         &SEQ_LITERAL_LENGTH_DEFAULT_DIST,
         &SEQ_OFFSET_DEFAULT_DIST,
         &SEQ_MATCH_LENGTH_DEFAULT_DIST,
     ];
-    const DEFAULT_DISTRIBUTION_ACCURACIES: [i32; 3] = [6, 5, 6];
 
     // "The maximum accuracy log is 9 for literal and match lengths, and 8 for offsets"
-    const MAX_ACCURACIES: [i32; 3] = [9, 8, 9];
 
     if mode != 3 {
         // Free old one before overwriting
@@ -1350,6 +1359,10 @@ fn execute_match_copy(
 
 /// The size a frame's header says it decompresses to, or `None` when the header does not say
 /// (`ZSTD_get_decompressed_size`, which gives -1 then).
+///
+/// # Errors
+///
+/// A [`DecompressError`] if the frame's header is not valid or is cut short.
 pub fn decompressed_size(frame: &[u8]) -> Result<Option<u64>, DecompressError> {
     let mut input = IStream::new(frame);
 
@@ -1377,6 +1390,11 @@ pub fn decompressed_size(frame: &[u8]) -> Result<Option<u64>, DecompressError> {
 impl Dictionary {
     /// A dictionary out of its bytes: `parse_dictionary`. Bytes that do not begin as a
     /// dictionary with tables does are a dictionary of content alone.
+    ///
+    /// # Errors
+    ///
+    /// A [`DecompressError`] if the bytes begin as a dictionary but its tables are not
+    /// valid.
     pub fn parse(src: &[u8]) -> Result<Dictionary, DecompressError> {
         let mut dict = Dictionary::default();
         if src.len() < 8 {
@@ -1386,14 +1404,14 @@ impl Dictionary {
         let mut input = IStream::new(src);
 
         let magic_number = input.read_bits(32)? as u32;
-        if magic_number != 0xEC30A437 {
+        if magic_number != 0xEC30_A437 {
             // raw content dict
             input.rewind_bits(32)?;
             init_dictionary_content(&mut dict, &mut input)?;
             return Ok(dict);
         }
 
-        dict.dictionary_id = input.read_bits(32)? as u32;
+        dict.id = input.read_bits(32)? as u32;
 
         // "Entropy_Tables : following the same format as the tables in compressed
         // blocks. They are stored in following order : Huffman tables for literals,
@@ -1461,7 +1479,7 @@ fn frame_context_apply_dict<'d>(ctx: &mut FrameContext<'d>, dict: &'d Dictionary
 
     // If the requested dictionary_id is non-zero, the correct dictionary must
     // be present
-    if ctx.header.dictionary_id != 0 && ctx.header.dictionary_id != dict.dictionary_id {
+    if ctx.header.dictionary_id != 0 && ctx.header.dictionary_id != dict.id {
         return error("Wrong dictionary provided");
     }
 
@@ -1471,7 +1489,7 @@ fn frame_context_apply_dict<'d>(ctx: &mut FrameContext<'d>, dict: &'d Dictionary
 
     // If it's a formatted dict copy the precomputed tables in so they can
     // be used in the table repeat modes
-    if dict.dictionary_id != 0 {
+    if dict.id != 0 {
         // Deep copy the entropy tables so they can be freed independently of
         // the dictionary struct
         ctx.literals_dtable = huf_copy_dtable(&dict.literals_dtable);
@@ -1697,7 +1715,7 @@ fn huf_init_dtable_usingweights(weights: &[u8; HUF_MAX_SYMBS], num_symbs: usize)
     }
     bits[num_symbs] = (max_bits + 1 - last_weight) as u8; // Last weight is always non-zero
 
-    huf_init_dtable(&bits[..num_symbs + 1])
+    huf_init_dtable(&bits[..=num_symbs])
 }
 
 /******* FSE PRIMITIVES *******************************************************/
@@ -2032,7 +2050,7 @@ mod tests {
         let bytes = [0b1010_0110, 0b0000_1111, 0xff];
         assert_eq!(read_bits_le(&bytes, 3, 0), Ok(0b110));
         assert_eq!(read_bits_le(&bytes, 7, 3), Ok(0b111_0100));
-        assert_eq!(read_bits_le(&bytes, 24, 0), Ok(0xff0fa6));
+        assert_eq!(read_bits_le(&bytes, 24, 0), Ok(0x00ff_0fa6));
         assert_eq!(read_bits_le(&bytes, 0, 5), Ok(0));
         assert!(read_bits_le(&bytes, 65, 0).is_err());
         // From the end, and off the front: what is not there is zeros.

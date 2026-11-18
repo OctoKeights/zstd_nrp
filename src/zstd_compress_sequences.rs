@@ -7,6 +7,7 @@
 use super::bitstream::BitCStream;
 use super::common::{CError, CResult};
 use super::fse_compress::{self, FseCState, FseCTable};
+use super::hist;
 use super::zstd_compress::{SET_BASIC, SET_COMPRESSED, SET_REPEAT, SET_RLE, SeqDef, Strategy};
 
 pub(crate) const MAX_ML: u32 = 52;
@@ -178,29 +179,90 @@ pub(crate) fn cross_entropy_cost(
     let shift = 8 - accuracy_log;
     let mut cost = 0usize;
     for s in 0..=max as usize {
-        let norm_acc = if norm[s] != -1 { norm[s] as u32 } else { 1 };
+        let norm_acc = if norm[s] == -1 { 1 } else { norm[s] as u32 };
         let norm256 = norm_acc << shift;
         cost += count[s] as usize * K_INVERSE_PROBABILITY_LOG256[norm256 as usize] as usize;
     }
     cost >> 8
 }
 
+/// What zstd fixes for one of the three codes of the sequences: literal lengths, offsets or
+/// match lengths.
+pub(crate) struct SymbolType {
+    /// The largest code.
+    pub(crate) max: u32,
+    /// The largest log a table of them may have.
+    pub(crate) fse_log: u32,
+    /// The predefined distribution, its log and its largest code.
+    pub(crate) default_norm: &'static [i16],
+    pub(crate) default_norm_log: u32,
+    pub(crate) default_max: u32,
+    /// The extra bits after each code; none for offsets, whose code is their number.
+    pub(crate) extra_bits: Option<&'static [u8]>,
+}
+
+/// Literal lengths.
+pub(crate) const LITERAL_LENGTHS: SymbolType = SymbolType {
+    max: MAX_LL,
+    fse_log: LL_FSE_LOG,
+    default_norm: &LL_DEFAULT_NORM,
+    default_norm_log: LL_DEFAULT_NORM_LOG,
+    default_max: MAX_LL,
+    extra_bits: Some(&LL_BITS),
+};
+
+/// Offsets.
+pub(crate) const OFFSETS: SymbolType = SymbolType {
+    max: MAX_OFF,
+    fse_log: OFF_FSE_LOG,
+    default_norm: &OF_DEFAULT_NORM,
+    default_norm_log: OF_DEFAULT_NORM_LOG,
+    default_max: DEFAULT_MAX_OFF,
+    extra_bits: None,
+};
+
+/// Match lengths.
+pub(crate) const MATCH_LENGTHS: SymbolType = SymbolType {
+    max: MAX_ML,
+    fse_log: ML_FSE_LOG,
+    default_norm: &ML_DEFAULT_NORM,
+    default_norm_log: ML_DEFAULT_NORM_LOG,
+    default_max: MAX_ML,
+    extra_bits: Some(&ML_BITS),
+};
+
+/// The codes of one kind in a block, counted: `count` up to `max`, the largest code there.
+pub(crate) struct Histogram<'a> {
+    pub(crate) count: &'a mut [u32],
+    pub(crate) max: u32,
+    /// The count of the most frequent code.
+    pub(crate) most_frequent: usize,
+    /// How many codes were counted.
+    pub(crate) nb_seq: usize,
+}
+
+/// The table of one code: the previous block's, with its repeat mode, and the next block's,
+/// being made.
+pub(crate) struct TableState<'a> {
+    pub(crate) prev: &'a FseCTable,
+    pub(crate) prev_repeat: FseRepeat,
+    pub(crate) next: &'a mut FseCTable,
+    pub(crate) next_repeat: &'a mut FseRepeat,
+}
+
 /// `ZSTD_selectEncodingType`: the kind of table for one of the three codes of the
-/// sequences, whose counts are `count` up to `max`.
-#[allow(clippy::too_many_arguments)]
+/// sequences, counted in `histogram`.
 pub(crate) fn select_encoding_type(
+    kind: &SymbolType,
     repeat_mode: &mut FseRepeat,
-    count: &[u32],
-    max: u32,
-    most_frequent: usize,
-    nb_seq: usize,
-    fse_log: u32,
     prev_ctable: &FseCTable,
-    default_norm: &[i16],
-    default_norm_log: u32,
+    histogram: &Histogram<'_>,
     is_default_allowed: bool,
     strategy: Strategy,
 ) -> u32 {
+    let (count, max) = (&*histogram.count, histogram.max);
+    let (most_frequent, nb_seq) = (histogram.most_frequent, histogram.nb_seq);
+    let (default_norm, default_norm_log) = (kind.default_norm, kind.default_norm_log);
     if most_frequent == nb_seq {
         *repeat_mode = FseRepeat::None;
         if is_default_allowed && nb_seq <= 2 {
@@ -235,12 +297,12 @@ pub(crate) fn select_encoding_type(
         } else {
             COST_ERROR
         };
-        let repeat_cost = if *repeat_mode != FseRepeat::None {
-            fse_bit_cost(prev_ctable, count, max)
-        } else {
+        let repeat_cost = if *repeat_mode == FseRepeat::None {
             COST_ERROR
+        } else {
+            fse_bit_cost(prev_ctable, count, max)
         };
-        let ncount_cost = ncount_cost(count, max, nb_seq, fse_log);
+        let ncount_cost = ncount_cost(count, max, nb_seq, kind.fse_log);
         let compressed_cost = (ncount_cost << 3).wrapping_add(entropy_cost(count, max, nb_seq));
 
         if basic_cost <= repeat_cost && basic_cost <= compressed_cost {
@@ -256,22 +318,19 @@ pub(crate) fn select_encoding_type(
 }
 
 /// `ZSTD_buildCTable`: the table of the chosen kind in `next_ctable`, and what describes it
-/// in `dst`. The answer is the size of the description.
-#[allow(clippy::too_many_arguments)]
+/// in `dst`. `code_table` holds the codes counted in `histogram`. The answer is the size of
+/// the description.
 pub(crate) fn build_ctable(
     dst: &mut [u8],
     next_ctable: &mut FseCTable,
-    fse_log: u32,
-    encoding_type: u32,
-    count: &mut [u32],
-    max: u32,
-    code_table: &[u8],
-    nb_seq: usize,
-    default_norm: &[i16],
-    default_norm_log: u32,
-    default_max: u32,
     prev_ctable: &FseCTable,
+    kind: &SymbolType,
+    encoding_type: u32,
+    histogram: &mut Histogram<'_>,
+    code_table: &[u8],
 ) -> CResult<usize> {
+    let (max, nb_seq) = (histogram.max, histogram.nb_seq);
+    let count = &mut *histogram.count;
     match encoding_type {
         SET_RLE => {
             fse_compress::build_ctable_rle(next_ctable, max as u8);
@@ -287,13 +346,14 @@ pub(crate) fn build_ctable(
         }
         SET_BASIC => {
             // note: could be pre-calculated
-            fse_compress::build_ctable(next_ctable, default_norm, default_max, default_norm_log);
+            let (norm, norm_log) = (kind.default_norm, kind.default_norm_log);
+            fse_compress::build_ctable(next_ctable, norm, kind.default_max, norm_log);
             Ok(0)
         }
         _ => {
             let mut norm = [0i16; MAX_SEQ + 1];
             let mut nb_seq_1 = nb_seq;
-            let table_log = fse_compress::optimal_table_log(fse_log, nb_seq, max);
+            let table_log = fse_compress::optimal_table_log(kind.fse_log, nb_seq, max);
             if count[code_table[nb_seq - 1] as usize] > 1 {
                 count[code_table[nb_seq - 1] as usize] -= 1;
                 nb_seq_1 -= 1;
@@ -316,45 +376,89 @@ pub(crate) fn build_ctable(
     }
 }
 
-/// `ZSTD_encodeSequences`: the sequences as one bit stream, last sequence first. The three
-/// `*_code_table`s hold the codes of the sequences; `sequences` their values.
-#[allow(clippy::too_many_arguments)]
+/// One code's table for a block: counts `codes` (in `count`), chooses the kind of table,
+/// builds it in `tables.next` and writes what describes it to `dst`. Returns the kind and
+/// the size of the description.
+pub(crate) fn encode_symbol_table(
+    kind: &SymbolType,
+    codes: &[u8],
+    TableState {
+        prev,
+        prev_repeat,
+        next,
+        next_repeat,
+    }: TableState<'_>,
+    count: &mut [u32],
+    strategy: Strategy,
+    dst: &mut [u8],
+) -> CResult<(u32, usize)> {
+    let mut max = kind.max;
+    let most_frequent = hist::count_simple(count, &mut max, codes) as usize;
+    let mut histogram = Histogram {
+        count,
+        max,
+        most_frequent,
+        nb_seq: codes.len(),
+    };
+    // The predefined table holds only codes up to its own largest (which matters for
+    // offsets alone).
+    let is_default_allowed = max <= kind.default_max;
+    *next_repeat = prev_repeat;
+    let encoding_type = select_encoding_type(
+        kind,
+        next_repeat,
+        prev,
+        &histogram,
+        is_default_allowed,
+        strategy,
+    );
+    let size = build_ctable(dst, next, prev, kind, encoding_type, &mut histogram, codes)?;
+    Ok((encoding_type, size))
+}
+
+/// The table of one code and the codes that use it.
+pub(crate) struct CodedSymbols<'a> {
+    pub(crate) ctable: &'a FseCTable,
+    pub(crate) codes: &'a [u8],
+}
+
+/// `ZSTD_encodeSequences`: the sequences as one bit stream, last sequence first, with the
+/// three codes of each and their tables; `sequences` holds their values.
 pub(crate) fn encode_sequences(
     dst: &mut [u8],
-    ctable_match_length: &FseCTable,
-    ml_code_table: &[u8],
-    ctable_offset_bits: &FseCTable,
-    of_code_table: &[u8],
-    ctable_lit_length: &FseCTable,
-    ll_code_table: &[u8],
+    match_lengths: &CodedSymbols<'_>,
+    offsets: &CodedSymbols<'_>,
+    literal_lengths: &CodedSymbols<'_>,
     sequences: &[SeqDef],
 ) -> CResult<usize> {
+    let (ctable_match_length, ml_code_table) = (match_lengths.ctable, match_lengths.codes);
+    let (ctable_offset_bits, of_code_table) = (offsets.ctable, offsets.codes);
+    let (ctable_lit_length, ll_code_table) = (literal_lengths.ctable, literal_lengths.codes);
     let nb_seq = sequences.len();
-    let mut block_stream = match BitCStream::init(dst) {
-        Some(block_stream) => block_stream,
-        None => return Err(CError::DstSizeTooSmall), // not enough space remaining
+    let Some(mut block_stream) = BitCStream::init(dst) else {
+        return Err(CError::DstSizeTooSmall);
     };
 
     // First symbols.
     let mut state_match_length =
-        FseCState::init2(ctable_match_length, ml_code_table[nb_seq - 1] as u32);
+        FseCState::init2(ctable_match_length, u32::from(ml_code_table[nb_seq - 1]));
     let mut state_offset_bits =
-        FseCState::init2(ctable_offset_bits, of_code_table[nb_seq - 1] as u32);
+        FseCState::init2(ctable_offset_bits, u32::from(of_code_table[nb_seq - 1]));
     let mut state_lit_length =
-        FseCState::init2(ctable_lit_length, ll_code_table[nb_seq - 1] as u32);
+        FseCState::init2(ctable_lit_length, u32::from(ll_code_table[nb_seq - 1]));
     block_stream.add_bits(
-        sequences[nb_seq - 1].lit_length as u64,
-        LL_BITS[ll_code_table[nb_seq - 1] as usize] as u32,
+        u64::from(sequences[nb_seq - 1].lit_length),
+        u32::from(LL_BITS[ll_code_table[nb_seq - 1] as usize]),
     );
     block_stream.add_bits(
-        sequences[nb_seq - 1].ml_base as u64,
-        ML_BITS[ml_code_table[nb_seq - 1] as usize] as u32,
+        u64::from(sequences[nb_seq - 1].ml_base),
+        u32::from(ML_BITS[ml_code_table[nb_seq - 1] as usize]),
     );
     // (A 64-bit build never has offsets too long for one go: the window stops at 2^31.)
     add_offset_bits(
         &mut block_stream,
         sequences[nb_seq - 1].off_base,
-        of_code_table[nb_seq - 1] as u32,
+        u32::from(of_code_table[nb_seq - 1]),
     );
     block_stream.flush_bits();
 
@@ -362,19 +466,19 @@ pub(crate) fn encode_sequences(
         let ll_code = ll_code_table[n];
         let of_code = of_code_table[n];
         let ml_code = ml_code_table[n];
-        let ll_bits = LL_BITS[ll_code as usize] as u32;
-        let of_bits = of_code as u32;
-        let ml_bits = ML_BITS[ml_code as usize] as u32;
+        let ll_bits = u32::from(LL_BITS[ll_code as usize]);
+        let of_bits = u32::from(of_code);
+        let ml_bits = u32::from(ML_BITS[ml_code as usize]);
         // 32b*/64b*
         // (7)*/(7)*
-        state_offset_bits.encode_symbol(&mut block_stream, of_code as u32); // 15*/15*
-        state_match_length.encode_symbol(&mut block_stream, ml_code as u32); // 24*/24*
-        state_lit_length.encode_symbol(&mut block_stream, ll_code as u32); // 16*/33*
+        state_offset_bits.encode_symbol(&mut block_stream, u32::from(of_code)); // 15*/15*
+        state_match_length.encode_symbol(&mut block_stream, u32::from(ml_code)); // 24*/24*
+        state_lit_length.encode_symbol(&mut block_stream, u32::from(ll_code)); // 16*/33*
         if of_bits + ml_bits + ll_bits >= 64 - 7 - (LL_FSE_LOG + ML_FSE_LOG + OFF_FSE_LOG) {
             block_stream.flush_bits(); // (7)
         }
-        block_stream.add_bits(sequences[n].lit_length as u64, ll_bits);
-        block_stream.add_bits(sequences[n].ml_base as u64, ml_bits);
+        block_stream.add_bits(u64::from(sequences[n].lit_length), ll_bits);
+        block_stream.add_bits(u64::from(sequences[n].ml_base), ml_bits);
         if of_bits + ml_bits + ll_bits > 56 {
             block_stream.flush_bits();
         }
@@ -399,5 +503,5 @@ pub(crate) fn encode_sequences(
 /// is 31 at most.
 #[inline]
 fn add_offset_bits(block_stream: &mut BitCStream, off_base: u32, of_bits: u32) {
-    block_stream.add_bits(off_base as u64, of_bits);
+    block_stream.add_bits(u64::from(off_base), of_bits);
 }

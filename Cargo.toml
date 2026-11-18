@@ -1,7 +1,7 @@
 [package]
 name = "zstd_nrp"
 description = "Zstandard compression in pure, safe Rust: a native port of zstd's compressor, bit-identical to it at every level, and of its reference decoder."
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.100"
 license = "BSD-3-Clause OR GPL-2.0-only"
@@ -12,3 +12,18 @@ categories = ["compression"]
 
 [dependencies]
 
+[lints.rust]
+# No unsafe code in the library, its tests, examples or benchmarks.
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Integer and float conversions that narrow or reinterpret are the codec's arithmetic, as they
+# are in the original's C; each is deliberate, so these four are not flagged.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+# Flags clear pairs of names such as max_ac and max_dc, or runs and rune.
+similar_names = "allow"

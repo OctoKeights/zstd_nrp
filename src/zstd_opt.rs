@@ -24,7 +24,7 @@ use super::zstd_compress_sequences::{LL_BITS, MAX_LL, MAX_ML, MAX_OFF, ML_BITS};
 const ZSTD_LITFREQ_ADD: u32 = 2;
 const ZSTD_MAX_PRICE: i32 = 1 << 30;
 
-/// `ZSTD_PREDEF_THRESHOLD`: if srcSize < ZSTD_PREDEF_THRESHOLD, symbols' cost is assumed
+/// `ZSTD_PREDEF_THRESHOLD`: if srcSize < `ZSTD_PREDEF_THRESHOLD`, symbols' cost is assumed
 /// static, directly determined by pre-defined distributions.
 const ZSTD_PREDEF_THRESHOLD: usize = 8;
 
@@ -432,7 +432,9 @@ fn update_tree_internal(ms: &mut MatchState, src: &[u8], ip: usize, iend: usize,
 /// `ZSTD_insertBtAndGetAllMatches`: the matches from `ip`, from the repeat offsets and the
 /// tree, each longer than the one before; with `ip` put into the tree. The answer is how
 /// many there are, in `matches`.
-#[allow(clippy::too_many_arguments)]
+// (One match-finding loop, as zstd's, its state shared throughout; its parameters are
+// zstd's, each a separate part of the search's state.)
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn insert_bt_and_get_all_matches(
     matches: &mut [OptMatch],
     ms: &mut MatchState,
@@ -480,8 +482,8 @@ fn insert_bt_and_get_all_matches(
             };
             let rep_index = curr.wrapping_sub(rep_offset);
             let mut rep_len = 0u32;
-            if rep_offset.wrapping_sub(1) /* intentional overflow, discards 0 and -1 */ < curr - dict_limit
-            {
+            // (The subtraction wraps on purpose, discarding 0 and -1.)
+            if rep_offset.wrapping_sub(1) < curr - dict_limit {
                 // equivalent to `curr > repIndex >= dictLimit`
                 if rep_index >= window_low
                     && read_minmatch(src, ip, min_match)
@@ -604,6 +606,7 @@ fn insert_bt_and_get_all_matches(
 }
 
 /// `ZSTD_btGetAllMatches_internal`, with no dictionary.
+// (Zstd's parameters, each a separate part of the search's state.)
 #[allow(clippy::too_many_arguments)]
 #[inline]
 fn bt_get_all_matches(
@@ -760,6 +763,8 @@ impl OptLdm<'_> {
     }
 
     /// `ZSTD_optLdm_processMatchCandidate`: the store updated and the match added as needed.
+    // (Out of line, so that the parser's innermost loop keeps its registers.)
+    #[inline(never)]
     fn process_match_candidate(
         &mut self,
         matches: &mut [OptMatch],
@@ -793,7 +798,9 @@ impl OptLdm<'_> {
 /// `src[istart..istart + src_size]` go to `seq_store`. `opt_level` is 0 for `btopt` and 2
 /// for `btultra`; `ldm` the long-distance matches for the block, if there are any. The
 /// answer is how many bytes at the end of the block no sequence covers.
-#[allow(clippy::too_many_arguments)]
+// (One match-finding loop, as zstd's, its state shared throughout; its parameters are
+// zstd's, each a separate part of the search's state.)
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) fn compress_block_opt(
     ms: &mut MatchState,
     seq_store: &mut SeqStore,
@@ -835,7 +842,7 @@ pub(crate) fn compress_block_opt(
     ip += usize::from(ip == prefix_start);
 
     let lit_price = |opt_state: &OptState, pos: usize| {
-        raw_literals_cost(&src[pos..pos + 1], opt_state, opt_level) as i32
+        raw_literals_cost(core::slice::from_ref(&src[pos]), opt_state, opt_level) as i32
     };
     let ll_price = |opt_state: &OptState, lit_length: u32| {
         lit_length_price(lit_length, opt_state, opt_level) as i32

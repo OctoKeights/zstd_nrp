@@ -2,14 +2,14 @@
 //! prints a running hash of what comes out, as `compare/dump_zstd*.c` does with the original.
 //! `compare/compare.sh` compares the two.
 //!
-//!   dump zstd_decode <seed> <count> <file>         the frames compare/dump_zstd.c wrote to the
-//!   dump zstd_decode_small <seed> <count> <file>   file, each asked its size and decoded
-//!   dump zstd_compress <seed> <count>              synthetic data compressed at levels 1 to 4,
-//!   dump zstd_compress_small <seed> <count>        0 and the negative ones
-//!   dump zstd_compress_more <seed> <count>         the same at levels 4 to 22
-//!   dump zstd_compress_more_small <seed> <count>
-//!   dump zstd_compress_long <seed> <count>         64 to 80 megabytes at level 22
-//!   dump zstd_entropy <seed> <count>               the entropy coders one function at a time
+//!   dump `zstd_decode` <seed> <count> <file>         the frames `compare/dump_zstd.c` wrote to the
+//!   dump `zstd_decode_small` <seed> <count> <file>   file, each asked its size and decoded
+//!   dump `zstd_compress` <seed> <count>              synthetic data compressed at levels 1 to 4,
+//!   dump `zstd_compress_small` <seed> <count>        0 and the negative ones
+//!   dump `zstd_compress_more` <seed> <count>         the same at levels 4 to 22
+//!   dump `zstd_compress_more_small` <seed> <count>
+//!   dump `zstd_compress_long` <seed> <count>         64 to 80 megabytes at level 22
+//!   dump `zstd_entropy` <seed> <count>               the entropy coders one function at a time
 
 #[path = "../tests/made_up/mod.rs"]
 mod made_up;
@@ -36,10 +36,10 @@ fn main() {
             print!("{}", made_up::zstd_decode(what, count, &file));
         }
         "zstd_compress" | "zstd_compress_small" => {
-            print!("{}", made_up::zstd_compress(what, seed, count, false))
+            print!("{}", made_up::zstd_compress(what, seed, count, false));
         }
         "zstd_compress_long" => {
-            print!("{}", made_up::zstd_compress_long(what, seed, count, false))
+            print!("{}", made_up::zstd_compress_long(what, seed, count, false));
         }
         "zstd_compress_more" | "zstd_compress_more_small" => {
             let highest = args

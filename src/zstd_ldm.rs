@@ -24,79 +24,79 @@ const LDM_BATCH_SIZE: usize = 64;
 /// `ZSTD_ldm_gearTab`.
 #[rustfmt::skip]
 const GEAR_TAB: [u64; 256] = [
-    0xf5b8f72c5f77775c, 0x84935f266b7ac412, 0xb647ada9ca730ccc, 0xb065bb4b114fb1de,
-    0x34584e7e8c3a9fd0, 0x4e97e17c6ae26b05, 0x3a03d743bc99a604, 0xcecd042422c4044f,
-    0x76de76c58524259e, 0x9c8528f65badeaca, 0x86563706e2097529, 0x2902475fa375d889,
-    0xafb32a9739a5ebe6, 0xce2714da3883e639, 0x21eaf821722e69e, 0x37b628620b628,
-    0x49a8d455d88caf5, 0x8556d711e6958140, 0x4f7ae74fc605c1f, 0x829f0c3468bd3a20,
-    0x4ffdc885c625179e, 0x8473de048a3daf1b, 0x51008822b05646b2, 0x69d75d12b2d1cc5f,
-    0x8c9d4a19159154bc, 0xc3cc10f4abbd4003, 0xd06ddc1cecb97391, 0xbe48e6e7ed80302e,
-    0x3481db31cee03547, 0xacc3f67cdaa1d210, 0x65cb771d8c7f96cc, 0x8eb27177055723dd,
-    0xc789950d44cd94be, 0x934feadc3700b12b, 0x5e485f11edbdf182, 0x1e2e2a46fd64767a,
-    0x2969ca71d82efa7c, 0x9d46e9935ebbba2e, 0xe056b67e05e6822b, 0x94d73f55739d03a0,
-    0xcd7010bdb69b5a03, 0x455ef9fcd79b82f4, 0x869cb54a8749c161, 0x38d1a4fa6185d225,
-    0xb475166f94bbe9bb, 0xa4143548720959f1, 0x7aed4780ba6b26ba, 0xd0ce264439e02312,
-    0x84366d746078d508, 0xa8ce973c72ed17be, 0x21c323a29a430b01, 0x9962d617e3af80ee,
-    0xab0ce91d9c8cf75b, 0x530e8ee6d19a4dbc, 0x2ef68c0cf53f5d72, 0xc03a681640a85506,
-    0x496e4e9f9c310967, 0x78580472b59b14a0, 0x273824c23b388577, 0x66bf923ad45cb553,
-    0x47ae1a5a2492ba86, 0x35e304569e229659, 0x4765182a46870b6f, 0x6cbab625e9099412,
-    0xddac9a2e598522c1, 0x7172086e666624f2, 0xdf5003ca503b7837, 0x88c0c1db78563d09,
-    0x58d51865acfc289d, 0x177671aec65224f1, 0xfb79d8a241e967d7, 0x2be1e101cad9a49a,
-    0x6625682f6e29186b, 0x399553457ac06e50, 0x35dffb4c23abb74, 0x429db2591f54aade,
-    0xc52802a8037d1009, 0x6acb27381f0b25f3, 0xf45e2551ee4f823b, 0x8b0ea2d99580c2f7,
-    0x3bed519cbcb4e1e1, 0xff452823dbb010a, 0x9d42ed614f3dd267, 0x5b9313c06257c57b,
-    0xa114b8008b5e1442, 0xc1fe311c11c13d4b, 0x66e8763ea34c5568, 0x8b982af1c262f05d,
-    0xee8876faaa75fbb7, 0x8a62a4d0d172bb2a, 0xc13d94a3b7449a97, 0x6dbbba9dc15d037c,
-    0xc786101f1d92e0f1, 0xd78681a907a0b79b, 0xf61aaf2962c9abb9, 0x2cfd16fcd3cb7ad9,
-    0x868c5b6744624d21, 0x25e650899c74ddd7, 0xba042af4a7c37463, 0x4eb1a539465a3eca,
-    0xbe09dbf03b05d5ca, 0x774e5a362b5472ba, 0x47a1221229d183cd, 0x504b0ca18ef5a2df,
-    0xdffbdfbde2456eb9, 0x46cd2b2fbee34634, 0xf2aef8fe819d98c3, 0x357f5276d4599d61,
-    0x24a5483879c453e3, 0x88026889192b4b9, 0x28da96671782dbec, 0x4ef37c40588e9aaa,
-    0x8837b90651bc9fb3, 0xc164f741d3f0e5d6, 0xbc135a0a704b70ba, 0x69cd868f7622ada,
-    0xbc37ba89e0b9c0ab, 0x47c14a01323552f6, 0x4f00794bacee98bb, 0x7107de7d637a69d5,
-    0x88af793bb6f2255e, 0xf3c6466b8799b598, 0xc288c616aa7f3b59, 0x81ca63cf42fca3fd,
-    0x88d85ace36a2674b, 0xd056bd3792389e7, 0xe55c396c4e9dd32d, 0xbefb504571e6c0a6,
-    0x96ab32115e91e8cc, 0xbf8acb18de8f38d1, 0x66dae58801672606, 0x833b6017872317fb,
-    0xb87c16f2d1c92864, 0xdb766a74e58b669c, 0x89659f85c61417be, 0xc8daad856011ea0c,
-    0x76a4b565b6fe7eae, 0xa469d085f6237312, 0xaaf0365683a3e96c, 0x4dbb746f8424f7b8,
-    0x638755af4e4acc1, 0x3d7807f5bde64486, 0x17be6d8f5bbb7639, 0x903f0cd44dc35dc,
-    0x67b672eafdf1196c, 0xa676ff93ed4c82f1, 0x521d1004c5053d9d, 0x37ba9ad09ccc9202,
-    0x84e54d297aacfb51, 0xa0b4b776a143445, 0x820d471e20b348e, 0x1874383cb83d46dc,
-    0x97edeec7a1efe11c, 0xb330e50b1bdc42aa, 0x1dd91955ce70e032, 0xa514cdb88f2939d5,
-    0x2791233fd90db9d3, 0x7b670a4cc50f7a9b, 0x77c07d2a05c6dfa5, 0xe3778b6646d0a6fa,
-    0xb39c8eda47b56749, 0x933ed448addbef28, 0xaf846af6ab7d0bf4, 0xe5af208eb666e49,
-    0x5e6622f73534cd6a, 0x297daeca42ef5b6e, 0x862daef3d35539a6, 0xe68722498f8e1ea9,
-    0x981c53093dc0d572, 0xfa09b0bfbf86fbf5, 0x30b1e96166219f15, 0x70e7d466bdc4fb83,
-    0x5a66736e35f2a8e9, 0xcddb59d2b7c1baef, 0xd6c7d247d26d8996, 0xea4e39eac8de1ba3,
-    0x539c8bb19fa3aff2, 0x9f90e4c5fd508d8, 0xa34e5956fbaf3385, 0x2e2f8e151d3ef375,
-    0x173691e9b83faec1, 0xb85a8d56bf016379, 0x8382381267408ae3, 0xb90f901bbdc0096d,
-    0x7c6ad32933bcec65, 0x76bb5e2f2c8ad595, 0x390f851a6cf46d28, 0xc3e6064da1c2da72,
-    0xc52a0c101cfa5389, 0xd78eaf84a3fbc530, 0x3781b9e2288b997e, 0x73c2f6dea83d05c4,
-    0x4228e364c5b5ed7, 0x9d7a3edf0da43911, 0x8edcfeda24686756, 0x5e7667a7b7a9b3a1,
-    0x4c4f389fa143791d, 0xb08bc1023da7cddc, 0x7ab4be3ae529b1cc, 0x754e6132dbe74ff9,
-    0x71635442a839df45, 0x2f6fb1643fbe52de, 0x961e0a42cf7a8177, 0xf3b45d83d89ef2ea,
-    0xee3de4cf4a6e3e9b, 0xcd6848542c3295e7, 0xe4cee1664c78662f, 0x9947548b474c68c4,
-    0x25d73777a5ed8b0b, 0xc915b1d636b7fc, 0x21c2ba75d9b0d2da, 0x5f6b5dcf608a64a1,
-    0xdcf333255ff9570c, 0x633b922418ced4ee, 0xc136dde0b004b34a, 0x58cc83b05d4b2f5a,
-    0x5eb424dda28e42d2, 0x62df47369739cd98, 0xb4e0b42485e4ce17, 0x16e1f0c1f9a8d1e7,
-    0x8ec3916707560ebf, 0x62ba6e2df2cc9db3, 0xcbf9f4ff77d83a16, 0x78d9d7d07d2bbcc4,
-    0xef554ce1e02c41f4, 0x8d7581127eccf94d, 0xa9b53336cb3c8a05, 0x38c42c0bf45c4f91,
-    0x640893cdf4488863, 0x80ec34bc575ea568, 0x39f324f5b48eaa40, 0xe9d9ed1f8eff527f,
-    0x9224fc058cc5a214, 0xbaba00b04cfe7741, 0x309a9f120fcf52af, 0xa558f3ec65626212,
-    0x424bec8b7adabe2f, 0x41622513a6aea433, 0xb88da2d5324ca798, 0xd287733b245528a4,
-    0x9a44697e6d68aec3, 0x7b1093be2f49bb28, 0x50bbec632e3d8aad, 0x6cd90723e1ea8283,
-    0x897b9e7431b02bf3, 0x219efdcb338a7047, 0x3b0311f0a27c0656, 0xdb17bf91c0db96e7,
-    0x8cd4fd6b4e85a5b2, 0xfab071054ba6409d, 0x40d6fe831fa9dfd9, 0xaf358debad7d791e,
-    0xeb8d0e25a65e3e58, 0xbbcbd3df14e08580, 0xcf751f27ecdab2b, 0x2b4da14f2613d8f4,
+    0xf5b8_f72c_5f77_775c, 0x8493_5f26_6b7a_c412, 0xb647_ada9_ca73_0ccc, 0xb065_bb4b_114f_b1de,
+    0x3458_4e7e_8c3a_9fd0, 0x4e97_e17c_6ae2_6b05, 0x3a03_d743_bc99_a604, 0xcecd_0424_22c4_044f,
+    0x76de_76c5_8524_259e, 0x9c85_28f6_5bad_eaca, 0x8656_3706_e209_7529, 0x2902_475f_a375_d889,
+    0xafb3_2a97_39a5_ebe6, 0xce27_14da_3883_e639, 0x021e_af82_1722_e69e, 0x0003_7b62_8620_b628,
+    0x049a_8d45_5d88_caf5, 0x8556_d711_e695_8140, 0x04f7_ae74_fc60_5c1f, 0x829f_0c34_68bd_3a20,
+    0x4ffd_c885_c625_179e, 0x8473_de04_8a3d_af1b, 0x5100_8822_b056_46b2, 0x69d7_5d12_b2d1_cc5f,
+    0x8c9d_4a19_1591_54bc, 0xc3cc_10f4_abbd_4003, 0xd06d_dc1c_ecb9_7391, 0xbe48_e6e7_ed80_302e,
+    0x3481_db31_cee0_3547, 0xacc3_f67c_daa1_d210, 0x65cb_771d_8c7f_96cc, 0x8eb2_7177_0557_23dd,
+    0xc789_950d_44cd_94be, 0x934f_eadc_3700_b12b, 0x5e48_5f11_edbd_f182, 0x1e2e_2a46_fd64_767a,
+    0x2969_ca71_d82e_fa7c, 0x9d46_e993_5ebb_ba2e, 0xe056_b67e_05e6_822b, 0x94d7_3f55_739d_03a0,
+    0xcd70_10bd_b69b_5a03, 0x455e_f9fc_d79b_82f4, 0x869c_b54a_8749_c161, 0x38d1_a4fa_6185_d225,
+    0xb475_166f_94bb_e9bb, 0xa414_3548_7209_59f1, 0x7aed_4780_ba6b_26ba, 0xd0ce_2644_39e0_2312,
+    0x8436_6d74_6078_d508, 0xa8ce_973c_72ed_17be, 0x21c3_23a2_9a43_0b01, 0x9962_d617_e3af_80ee,
+    0xab0c_e91d_9c8c_f75b, 0x530e_8ee6_d19a_4dbc, 0x2ef6_8c0c_f53f_5d72, 0xc03a_6816_40a8_5506,
+    0x496e_4e9f_9c31_0967, 0x7858_0472_b59b_14a0, 0x2738_24c2_3b38_8577, 0x66bf_923a_d45c_b553,
+    0x47ae_1a5a_2492_ba86, 0x35e3_0456_9e22_9659, 0x4765_182a_4687_0b6f, 0x6cba_b625_e909_9412,
+    0xddac_9a2e_5985_22c1, 0x7172_086e_6666_24f2, 0xdf50_03ca_503b_7837, 0x88c0_c1db_7856_3d09,
+    0x58d5_1865_acfc_289d, 0x1776_71ae_c652_24f1, 0xfb79_d8a2_41e9_67d7, 0x2be1_e101_cad9_a49a,
+    0x6625_682f_6e29_186b, 0x3995_5345_7ac0_6e50, 0x035d_ffb4_c23a_bb74, 0x429d_b259_1f54_aade,
+    0xc528_02a8_037d_1009, 0x6acb_2738_1f0b_25f3, 0xf45e_2551_ee4f_823b, 0x8b0e_a2d9_9580_c2f7,
+    0x3bed_519c_bcb4_e1e1, 0x0ff4_5282_3dbb_010a, 0x9d42_ed61_4f3d_d267, 0x5b93_13c0_6257_c57b,
+    0xa114_b800_8b5e_1442, 0xc1fe_311c_11c1_3d4b, 0x66e8_763e_a34c_5568, 0x8b98_2af1_c262_f05d,
+    0xee88_76fa_aa75_fbb7, 0x8a62_a4d0_d172_bb2a, 0xc13d_94a3_b744_9a97, 0x6dbb_ba9d_c15d_037c,
+    0xc786_101f_1d92_e0f1, 0xd786_81a9_07a0_b79b, 0xf61a_af29_62c9_abb9, 0x2cfd_16fc_d3cb_7ad9,
+    0x868c_5b67_4462_4d21, 0x25e6_5089_9c74_ddd7, 0xba04_2af4_a7c3_7463, 0x4eb1_a539_465a_3eca,
+    0xbe09_dbf0_3b05_d5ca, 0x774e_5a36_2b54_72ba, 0x47a1_2212_29d1_83cd, 0x504b_0ca1_8ef5_a2df,
+    0xdffb_dfbd_e245_6eb9, 0x46cd_2b2f_bee3_4634, 0xf2ae_f8fe_819d_98c3, 0x357f_5276_d459_9d61,
+    0x24a5_4838_79c4_53e3, 0x0880_2688_9192_b4b9, 0x28da_9667_1782_dbec, 0x4ef3_7c40_588e_9aaa,
+    0x8837_b906_51bc_9fb3, 0xc164_f741_d3f0_e5d6, 0xbc13_5a0a_704b_70ba, 0x069c_d868_f762_2ada,
+    0xbc37_ba89_e0b9_c0ab, 0x47c1_4a01_3235_52f6, 0x4f00_794b_acee_98bb, 0x7107_de7d_637a_69d5,
+    0x88af_793b_b6f2_255e, 0xf3c6_466b_8799_b598, 0xc288_c616_aa7f_3b59, 0x81ca_63cf_42fc_a3fd,
+    0x88d8_5ace_36a2_674b, 0x0d05_6bd3_7923_89e7, 0xe55c_396c_4e9d_d32d, 0xbefb_5045_71e6_c0a6,
+    0x96ab_3211_5e91_e8cc, 0xbf8a_cb18_de8f_38d1, 0x66da_e588_0167_2606, 0x833b_6017_8723_17fb,
+    0xb87c_16f2_d1c9_2864, 0xdb76_6a74_e58b_669c, 0x8965_9f85_c614_17be, 0xc8da_ad85_6011_ea0c,
+    0x76a4_b565_b6fe_7eae, 0xa469_d085_f623_7312, 0xaaf0_3656_83a3_e96c, 0x4dbb_746f_8424_f7b8,
+    0x0638_755a_f4e4_acc1, 0x3d78_07f5_bde6_4486, 0x17be_6d8f_5bbb_7639, 0x0903_f0cd_44dc_35dc,
+    0x67b6_72ea_fdf1_196c, 0xa676_ff93_ed4c_82f1, 0x521d_1004_c505_3d9d, 0x37ba_9ad0_9ccc_9202,
+    0x84e5_4d29_7aac_fb51, 0x0a0b_4b77_6a14_3445, 0x0820_d471_e20b_348e, 0x1874_383c_b83d_46dc,
+    0x97ed_eec7_a1ef_e11c, 0xb330_e50b_1bdc_42aa, 0x1dd9_1955_ce70_e032, 0xa514_cdb8_8f29_39d5,
+    0x2791_233f_d90d_b9d3, 0x7b67_0a4c_c50f_7a9b, 0x77c0_7d2a_05c6_dfa5, 0xe377_8b66_46d0_a6fa,
+    0xb39c_8eda_47b5_6749, 0x933e_d448_addb_ef28, 0xaf84_6af6_ab7d_0bf4, 0x0e5a_f208_eb66_6e49,
+    0x5e66_22f7_3534_cd6a, 0x297d_aeca_42ef_5b6e, 0x862d_aef3_d355_39a6, 0xe687_2249_8f8e_1ea9,
+    0x981c_5309_3dc0_d572, 0xfa09_b0bf_bf86_fbf5, 0x30b1_e961_6621_9f15, 0x70e7_d466_bdc4_fb83,
+    0x5a66_736e_35f2_a8e9, 0xcddb_59d2_b7c1_baef, 0xd6c7_d247_d26d_8996, 0xea4e_39ea_c8de_1ba3,
+    0x539c_8bb1_9fa3_aff2, 0x09f9_0e4c_5fd5_08d8, 0xa34e_5956_fbaf_3385, 0x2e2f_8e15_1d3e_f375,
+    0x1736_91e9_b83f_aec1, 0xb85a_8d56_bf01_6379, 0x8382_3812_6740_8ae3, 0xb90f_901b_bdc0_096d,
+    0x7c6a_d329_33bc_ec65, 0x76bb_5e2f_2c8a_d595, 0x390f_851a_6cf4_6d28, 0xc3e6_064d_a1c2_da72,
+    0xc52a_0c10_1cfa_5389, 0xd78e_af84_a3fb_c530, 0x3781_b9e2_288b_997e, 0x73c2_f6de_a83d_05c4,
+    0x0422_8e36_4c5b_5ed7, 0x9d7a_3edf_0da4_3911, 0x8edc_feda_2468_6756, 0x5e76_67a7_b7a9_b3a1,
+    0x4c4f_389f_a143_791d, 0xb08b_c102_3da7_cddc, 0x7ab4_be3a_e529_b1cc, 0x754e_6132_dbe7_4ff9,
+    0x7163_5442_a839_df45, 0x2f6f_b164_3fbe_52de, 0x961e_0a42_cf7a_8177, 0xf3b4_5d83_d89e_f2ea,
+    0xee3d_e4cf_4a6e_3e9b, 0xcd68_4854_2c32_95e7, 0xe4ce_e166_4c78_662f, 0x9947_548b_474c_68c4,
+    0x25d7_3777_a5ed_8b0b, 0x00c9_15b1_d636_b7fc, 0x21c2_ba75_d9b0_d2da, 0x5f6b_5dcf_608a_64a1,
+    0xdcf3_3325_5ff9_570c, 0x633b_9224_18ce_d4ee, 0xc136_dde0_b004_b34a, 0x58cc_83b0_5d4b_2f5a,
+    0x5eb4_24dd_a28e_42d2, 0x62df_4736_9739_cd98, 0xb4e0_b424_85e4_ce17, 0x16e1_f0c1_f9a8_d1e7,
+    0x8ec3_9167_0756_0ebf, 0x62ba_6e2d_f2cc_9db3, 0xcbf9_f4ff_77d8_3a16, 0x78d9_d7d0_7d2b_bcc4,
+    0xef55_4ce1_e02c_41f4, 0x8d75_8112_7ecc_f94d, 0xa9b5_3336_cb3c_8a05, 0x38c4_2c0b_f45c_4f91,
+    0x6408_93cd_f448_8863, 0x80ec_34bc_575e_a568, 0x39f3_24f5_b48e_aa40, 0xe9d9_ed1f_8eff_527f,
+    0x9224_fc05_8cc5_a214, 0xbaba_00b0_4cfe_7741, 0x309a_9f12_0fcf_52af, 0xa558_f3ec_6562_6212,
+    0x424b_ec8b_7ada_be2f, 0x4162_2513_a6ae_a433, 0xb88d_a2d5_324c_a798, 0xd287_733b_2455_28a4,
+    0x9a44_697e_6d68_aec3, 0x7b10_93be_2f49_bb28, 0x50bb_ec63_2e3d_8aad, 0x6cd9_0723_e1ea_8283,
+    0x897b_9e74_31b0_2bf3, 0x219e_fdcb_338a_7047, 0x3b03_11f0_a27c_0656, 0xdb17_bf91_c0db_96e7,
+    0x8cd4_fd6b_4e85_a5b2, 0xfab0_7105_4ba6_409d, 0x40d6_fe83_1fa9_dfd9, 0xaf35_8deb_ad7d_791e,
+    0xeb8d_0e25_a65e_3e58, 0xbbcb_d3df_14e0_8580, 0x0cf7_51f2_7ecd_ab2b, 0x2b4d_a14f_2613_d8f4,
 ];
 
 /// `XXH64`, of `input` with `seed`.
 pub(crate) fn xxh64(input: &[u8], seed: u64) -> u64 {
-    const P1: u64 = 0x9E3779B185EBCA87;
-    const P2: u64 = 0xC2B2AE3D27D4EB4F;
-    const P3: u64 = 0x165667B19E3779F9;
-    const P4: u64 = 0x85EBCA77C2B2AE63;
-    const P5: u64 = 0x27D4EB2F165667C5;
+    const P1: u64 = 0x9E37_79B1_85EB_CA87;
+    const P2: u64 = 0xC2B2_AE3D_27D4_EB4F;
+    const P3: u64 = 0x1656_67B1_9E37_79F9;
+    const P4: u64 = 0x85EB_CA77_C2B2_AE63;
+    const P5: u64 = 0x27D4_EB2F_1656_67C5;
     fn round(acc: u64, input: u64) -> u64 {
         acc.wrapping_add(input.wrapping_mul(P2))
             .rotate_left(31)
@@ -464,9 +464,9 @@ impl LdmState {
         istart: usize,
         src_size: usize,
     ) -> Result<(), OutOfSequences> {
+        const K_MAX_CHUNK_SIZE: usize = 1 << 20;
         let max_dist = 1u32 << self.params.window_log;
         let iend = istart + src_size;
-        const K_MAX_CHUNK_SIZE: usize = 1 << 20;
         let nb_chunks = src_size.div_ceil(K_MAX_CHUNK_SIZE);
         let mut leftover_size = 0usize;
 
@@ -523,12 +523,12 @@ mod tests {
 
     #[test]
     fn xxh64_gives_the_known_hashes() {
-        assert_eq!(xxh64(b"", 0), 0xEF46DB3751D8E999);
-        assert_eq!(xxh64(b"a", 0), 0xD24EC4F1A98C6E5B);
-        assert_eq!(xxh64(b"abc", 0), 0x44BC2CF5AD770999);
+        assert_eq!(xxh64(b"", 0), 0xEF46_DB37_51D8_E999);
+        assert_eq!(xxh64(b"a", 0), 0xD24E_C4F1_A98C_6E5B);
+        assert_eq!(xxh64(b"abc", 0), 0x44BC_2CF5_AD77_0999);
         assert_eq!(
             xxh64(b"Nobody inspects the spammish repetition", 0),
-            0xFBCEA83C8A378BF1
+            0xFBCE_A83C_8A37_8BF1
         );
     }
 }

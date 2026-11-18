@@ -3,7 +3,7 @@
 
 use super::common::{CError, CResult, write_le16, write_le24, write_le32};
 use super::huf_compress::{
-    self, HUF_SYMBOLVALUE_MAX, HufCTable, HufCompressTables, HufNbStreams, HufRepeat,
+    self, HUF_SYMBOLVALUE_MAX, HufCTable, HufCompressTables, HufNbStreams, HufParams, HufRepeat,
 };
 use super::zstd_compress::{SET_BASIC, SET_COMPRESSED, SET_REPEAT, SET_RLE, Strategy, min_gain};
 
@@ -201,19 +201,31 @@ fn min_literals_to_compress(strategy: Strategy, huf_repeat: HufRepeat) -> usize 
     }
 }
 
+/// How a block's literals are compressed.
+#[derive(Clone, Copy)]
+pub(crate) struct LiteralOptions {
+    pub(crate) strategy: Strategy,
+    /// Store them as they are.
+    pub(crate) disable_compression: bool,
+    /// `HUF_flags_suspectUncompressible`.
+    pub(crate) suspect_uncompressible: bool,
+}
+
 /// `ZSTD_compressLiterals`: the literals section, Huffman coded where that is smaller.
 /// `next_huf` becomes the table to carry to the next block.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn compress_literals(
     dst: &mut [u8],
     src: &[u8],
     entropy_workspace: &mut HufCompressTables,
     prev_huf: &HufCTables,
     next_huf: &mut HufCTables,
-    strategy: Strategy,
-    disable_literal_compression: bool,
-    suspect_uncompressible: bool,
+    options: LiteralOptions,
 ) -> CResult<usize> {
+    let LiteralOptions {
+        strategy,
+        disable_compression: disable_literal_compression,
+        suspect_uncompressible,
+    } = options;
     let src_size = src.len();
     let dst_capacity = dst.len();
     let lh_size = 3 + usize::from(src_size >= 1024) + usize::from(src_size >= 16 * 1024);
@@ -247,18 +259,21 @@ pub(crate) fn compress_literals(
         } else {
             HufNbStreams::Four
         };
+        let params = HufParams {
+            max_symbol_value: HUF_SYMBOLVALUE_MAX,
+            max_log: LIT_HUF_LOG,
+            nb_streams,
+            prefer_repeat,
+            suspect_uncompressible,
+            optimal_depth: strategy as u32 >= Strategy::Btultra as u32,
+        };
         let result = huf_compress::compress_repeat(
             &mut dst[lh_size..],
             src,
-            HUF_SYMBOLVALUE_MAX,
-            LIT_HUF_LOG,
-            nb_streams,
+            params,
             entropy_workspace,
             &mut next_huf.ctable,
             &mut repeat,
-            prefer_repeat,
-            suspect_uncompressible,
-            strategy as u32 >= Strategy::Btultra as u32,
         );
         if repeat != HufRepeat::None {
             // Reused the existing table.

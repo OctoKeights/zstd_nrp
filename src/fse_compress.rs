@@ -95,7 +95,7 @@ pub(crate) fn build_ctable(
         let mut spread = vec![0u8; table_size as usize];
         let mut pos = 0usize;
         for (s, &n) in normalized_counter[..max_sv1 as usize].iter().enumerate() {
-            let n = n as i32;
+            let n = i32::from(n);
             if n > 0 {
                 spread[pos..pos + n as usize].fill(s as u8);
                 pos += n as usize;
@@ -115,7 +115,7 @@ pub(crate) fn build_ctable(
     } else {
         let mut position = 0u32;
         for symbol in 0..max_sv1 {
-            let freq = normalized_counter[symbol as usize] as i32;
+            let freq = i32::from(normalized_counter[symbol as usize]);
             let mut nb_occurrences = 0;
             while nb_occurrences < freq {
                 table_symbol[position as usize] = symbol as u8;
@@ -242,7 +242,7 @@ fn write_ncount_generic(
             }
         }
         {
-            let mut count = normalized_counter[symbol as usize] as i32;
+            let mut count = i32::from(normalized_counter[symbol as usize]);
             symbol += 1;
             let max = (2 * threshold - 1) - remaining;
             remaining -= if count < 0 { -count } else { count };
@@ -436,16 +436,16 @@ fn normalize_m2(
     }
 
     {
-        let v_step_log = 62 - table_log as u64;
+        let v_step_log = 62 - u64::from(table_log);
         let mid = (1u64 << (v_step_log - 1)) - 1;
         let r_step = ((1u64 << v_step_log)
-            .wrapping_mul(to_distribute as u64)
+            .wrapping_mul(u64::from(to_distribute))
             .wrapping_add(mid))
-            / (total as u32 as u64); // scale on remaining
+            / u64::from(total as u32); // scale on remaining
         let mut tmp_total = mid;
         for s in 0..=max_symbol_value as usize {
             if norm[s] == NOT_YET_ASSIGNED {
-                let end = tmp_total.wrapping_add((count[s] as u64).wrapping_mul(r_step));
+                let end = tmp_total.wrapping_add(u64::from(count[s]).wrapping_mul(r_step));
                 let s_start = (tmp_total >> v_step_log) as u32;
                 let s_end = (end >> v_step_log) as u32;
                 let weight = s_end.wrapping_sub(s_start);
@@ -486,10 +486,12 @@ pub(crate) fn normalize_count(
     }
 
     {
-        const RTB_TABLE: [u32; 8] = [0, 473195, 504333, 520860, 550000, 700000, 750000, 830000];
+        const RTB_TABLE: [u32; 8] = [
+            0, 473_195, 504_333, 520_860, 550_000, 700_000, 750_000, 830_000,
+        ];
         let low_prob_count: i16 = if use_low_prob_count { -1 } else { 1 };
-        let scale = 62 - table_log as u64;
-        let step = (1u64 << 62) / (total as u32 as u64); // <== here, one division!
+        let scale = 62 - u64::from(table_log);
+        let step = (1u64 << 62) / u64::from(total as u32); // <== here, one division!
         let v_step = 1u64 << (scale - 20);
         let mut still_to_distribute = 1i32 << table_log;
         let mut largest = 0usize;
@@ -508,10 +510,10 @@ pub(crate) fn normalize_count(
                 normalized_counter[s] = low_prob_count;
                 still_to_distribute -= 1;
             } else {
-                let scaled = (count[s] as u64).wrapping_mul(step);
+                let scaled = u64::from(count[s]).wrapping_mul(step);
                 let mut proba = (scaled >> scale) as i16;
                 if proba < 8 {
-                    let rest_to_beat = v_step * RTB_TABLE[proba as usize] as u64;
+                    let rest_to_beat = v_step * u64::from(RTB_TABLE[proba as usize]);
                     proba += i16::from(scaled.wrapping_sub((proba as u64) << scale) > rest_to_beat);
                 }
                 if proba > largest_p {
@@ -519,10 +521,10 @@ pub(crate) fn normalize_count(
                     largest = s;
                 }
                 normalized_counter[s] = proba;
-                still_to_distribute -= proba as i32;
+                still_to_distribute -= i32::from(proba);
             }
         }
-        if -still_to_distribute >= (normalized_counter[largest] as i32 >> 1) {
+        if -still_to_distribute >= (i32::from(normalized_counter[largest]) >> 1) {
             // The corner case: another normalization method is needed.
             normalize_m2(
                 normalized_counter,
@@ -544,7 +546,7 @@ pub(crate) fn normalize_count(
 /// `FSE_buildCTable_rle`: the table of a single symbol.
 pub(crate) fn build_ctable_rle(ct: &mut FseCTable, symbol_value: u8) {
     ct.table_log = 0;
-    ct.max_symbol_value = symbol_value as u32;
+    ct.max_symbol_value = u32::from(symbol_value);
     ct.state_table[0] = 0;
     ct.state_table[1] = 0; // just in case
     ct.symbol_tt[symbol_value as usize].delta_nb_bits = 0;
@@ -573,10 +575,11 @@ impl<'a> FseCState<'a> {
         let mut state = FseCState::init(ct);
         let symbol_tt = ct.symbol_tt[symbol as usize];
         let nb_bits_out = symbol_tt.delta_nb_bits.wrapping_add(1 << 15) >> 16;
-        state.value = (nb_bits_out << 16).wrapping_sub(symbol_tt.delta_nb_bits) as i64;
-        state.value = ct.state_table
-            [((state.value >> nb_bits_out) + symbol_tt.delta_find_state as i64) as usize]
-            as i64;
+        state.value = i64::from((nb_bits_out << 16).wrapping_sub(symbol_tt.delta_nb_bits));
+        state.value = i64::from(
+            ct.state_table
+                [((state.value >> nb_bits_out) + i64::from(symbol_tt.delta_find_state)) as usize],
+        );
         state
     }
 
@@ -584,11 +587,12 @@ impl<'a> FseCState<'a> {
     #[inline]
     pub(crate) fn encode_symbol(&mut self, bit_c: &mut BitCStream, symbol: u32) {
         let symbol_tt = self.ct.symbol_tt[symbol as usize];
-        let nb_bits_out = ((self.value + symbol_tt.delta_nb_bits as i64) >> 16) as u32;
+        let nb_bits_out = ((self.value + i64::from(symbol_tt.delta_nb_bits)) >> 16) as u32;
         bit_c.add_bits(self.value as u64, nb_bits_out);
-        self.value = self.ct.state_table
-            [((self.value >> nb_bits_out) + symbol_tt.delta_find_state as i64) as usize]
-            as i64;
+        self.value = i64::from(
+            self.ct.state_table
+                [((self.value >> nb_bits_out) + i64::from(symbol_tt.delta_find_state)) as usize],
+        );
     }
 
     /// `FSE_flushCState`.
@@ -609,20 +613,19 @@ pub(crate) fn compress_using_ctable(dst: &mut [u8], src: &[u8], ct: &FseCTable) 
     if src_size <= 2 {
         return 0;
     }
-    let mut bit_c = match BitCStream::init(dst) {
-        Some(bit_c) => bit_c,
-        None => return 0, // not enough space available to write a bitstream
+    let Some(mut bit_c) = BitCStream::init(dst) else {
+        return 0;
     };
     let flush = |bit_c: &mut BitCStream| {
         if fast {
-            bit_c.flush_bits_fast()
+            bit_c.flush_bits_fast();
         } else {
-            bit_c.flush_bits()
+            bit_c.flush_bits();
         }
     };
     let next = |ip: &mut usize| -> u32 {
         *ip -= 1;
-        src[*ip] as u32
+        u32::from(src[*ip])
     };
 
     let mut c_state1;

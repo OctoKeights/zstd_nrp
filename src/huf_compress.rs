@@ -157,7 +157,7 @@ fn read_ctable_header(ctable: &HufCTable) -> (u32, u32) {
 /// `HUF_writeCTableHeader`.
 #[inline]
 fn write_ctable_header(ctable: &mut HufCTable, table_log: u32, max_symbol_value: u32) {
-    ctable[0] = (table_log as u8) as u64 | (((max_symbol_value as u8) as u64) << 8);
+    ctable[0] = u64::from(table_log as u8) | (u64::from(max_symbol_value as u8) << 8);
 }
 
 /// `HUF_writeCTable_wksp`: the description of a table, as a block's literals section has it.
@@ -198,7 +198,7 @@ fn write_ctable(
     }
     {
         let h_size = compress_weights(&mut dst[1..], &huff_weight[..max_symbol_value])?;
-        if (h_size > 1) & (h_size < max_symbol_value / 2) {
+        if (h_size > 1) && (h_size < max_symbol_value / 2) {
             // FSE compressed.
             dst[0] = h_size as u8;
             return Ok(h_size + 1);
@@ -238,7 +238,7 @@ impl Nodes<'_> {
 /// `HUF_setMaxHeight`: enforces `target_nb_bits` on the tree described in `huff_node`. The
 /// answer is the highest number of bits there is afterwards.
 fn set_max_height(huff_node: &mut Nodes, last_non_null: u32, target_nb_bits: u32) -> u32 {
-    let largest_bits = huff_node.at(last_non_null as i32).nb_bits as u32;
+    let largest_bits = u32::from(huff_node.at(last_non_null as i32).nb_bits);
     // Early exit: no elt > targetNbBits, so the tree is already valid.
     if largest_bits <= target_nb_bits {
         return largest_bits;
@@ -251,16 +251,16 @@ fn set_max_height(huff_node: &mut Nodes, last_non_null: u32, target_nb_bits: u32
         let mut n = last_non_null as i32;
 
         // Adjust any ranks > targetNbBits to targetNbBits.
-        while huff_node.at(n).nb_bits as u32 > target_nb_bits {
+        while u32::from(huff_node.at(n).nb_bits) > target_nb_bits {
             total_cost = total_cost.wrapping_add(
-                (base_cost - (1u32 << (largest_bits - huff_node.at(n).nb_bits as u32))) as i32,
+                (base_cost - (1u32 << (largest_bits - u32::from(huff_node.at(n).nb_bits)))) as i32,
             );
             huff_node.at(n).nb_bits = target_nb_bits as u8;
             n -= 1;
         }
         // n stops at huffNode[n].nbBits <= targetNbBits.
         // Find n so that huffNode[n].nbBits < targetNbBits.
-        while huff_node.at(n).nb_bits as u32 == target_nb_bits {
+        while u32::from(huff_node.at(n).nb_bits) == target_nb_bits {
             n -= 1;
         }
 
@@ -270,7 +270,7 @@ fn set_max_height(huff_node: &mut Nodes, last_non_null: u32, target_nb_bits: u32
 
         // Repay normalized cost.
         {
-            const NO_SYMBOL: u32 = 0xF0F0F0F0;
+            const NO_SYMBOL: u32 = 0xF0F0_F0F0;
             let mut rank_last = [NO_SYMBOL; HUF_TABLELOG_MAX as usize + 2];
 
             // Get pos of last (smallest = lowest cum. count) symbol per rank.
@@ -278,11 +278,11 @@ fn set_max_height(huff_node: &mut Nodes, last_non_null: u32, target_nb_bits: u32
                 let mut current_nb_bits = target_nb_bits;
                 let mut pos = n;
                 while pos >= 0 {
-                    if huff_node.at(pos).nb_bits as u32 >= current_nb_bits {
+                    if u32::from(huff_node.at(pos).nb_bits) >= current_nb_bits {
                         pos -= 1;
                         continue;
                     }
-                    current_nb_bits = huff_node.at(pos).nb_bits as u32; // < targetNbBits
+                    current_nb_bits = u32::from(huff_node.at(pos).nb_bits); // < targetNbBits
                     rank_last[(target_nb_bits - current_nb_bits) as usize] = pos as u32;
                     pos -= 1;
                 }
@@ -341,10 +341,11 @@ fn set_max_height(huff_node: &mut Nodes, last_non_null: u32, target_nb_bits: u32
                     rank_last[n_bits_to_decrease as usize] = NO_SYMBOL;
                 } else {
                     rank_last[n_bits_to_decrease as usize] -= 1;
-                    if huff_node
-                        .at(rank_last[n_bits_to_decrease as usize] as i32)
-                        .nb_bits as u32
-                        != target_nb_bits - n_bits_to_decrease
+                    if u32::from(
+                        huff_node
+                            .at(rank_last[n_bits_to_decrease as usize] as i32)
+                            .nb_bits,
+                    ) != target_nb_bits - n_bits_to_decrease
                     {
                         // this rank is now empty
                         rank_last[n_bits_to_decrease as usize] = NO_SYMBOL;
@@ -358,7 +359,7 @@ fn set_max_height(huff_node: &mut Nodes, last_non_null: u32, target_nb_bits: u32
                 // If no rank 1 symbol exists (using up all of rank 0 is not wanted),
                 // create a rank 1 symbol from the lowest probability symbol of rank 0.
                 if rank_last[1] == NO_SYMBOL {
-                    while huff_node.at(n).nb_bits as u32 == target_nb_bits {
+                    while u32::from(huff_node.at(n).nb_bits) == target_nb_bits {
                         n -= 1;
                     }
                     huff_node.at(n + 1).nb_bits -= 1;
@@ -481,7 +482,7 @@ fn sort(
     for rank in
         &rank_position[RANK_POSITION_DISTINCT_COUNT_CUTOFF as usize..RANK_POSITION_TABLE_SIZE - 1]
     {
-        let bucket_size = rank.curr as i32 - rank.base as i32;
+        let bucket_size = i32::from(rank.curr) - i32::from(rank.base);
         let bucket_start_idx = rank.base as usize;
         if bucket_size > 1 {
             simple_quick_sort(&mut huff_node[bucket_start_idx..], 0, bucket_size - 1);
@@ -541,12 +542,12 @@ fn build_tree(huff_node: &mut Nodes, max_symbol_value: u32) -> i32 {
     huff_node.at(node_root).nb_bits = 0;
     let mut n = node_root - 1;
     while n >= STARTNODE {
-        let parent = huff_node.at(n).parent as i32;
+        let parent = i32::from(huff_node.at(n).parent);
         huff_node.at(n).nb_bits = huff_node.at(parent).nb_bits + 1;
         n -= 1;
     }
     for n in 0..=non_null_rank {
-        let parent = huff_node.at(n).parent as i32;
+        let parent = i32::from(huff_node.at(n).parent);
         huff_node.at(n).nb_bits = huff_node.at(parent).nb_bits + 1;
     }
 
@@ -580,14 +581,14 @@ fn build_ctable_from_tree(
     for n in 0..alphabet_size {
         let node = *huff_node.at(n);
         // push nbBits per symbol, symbol order
-        ctable[1 + node.byte as usize] = node.nb_bits as u64;
+        ctable[1 + node.byte as usize] = u64::from(node.nb_bits);
     }
     for n in 0..alphabet_size as usize {
         // Assign value within rank, symbol order.
         let rank = get_nb_bits(ctable[1 + n]) as usize;
         let value = val_per_rank[rank];
         val_per_rank[rank] = val_per_rank[rank].wrapping_add(1);
-        set_value(&mut ctable[1 + n], value as u64);
+        set_value(&mut ctable[1 + n], u64::from(value));
     }
 
     write_ctable_header(ctable, max_nb_bits, max_symbol_value);
@@ -949,9 +950,8 @@ fn compress1x_using_ctable(dst: &mut [u8], src: &[u8], ctable: &HufCTable) -> us
     if dst_size < 8 {
         return 0; // not enough space to compress
     }
-    let mut bit_c = match HufCStream::init(dst) {
-        Some(bit_c) => bit_c,
-        None => return 0,
+    let Some(mut bit_c) = HufCStream::init(dst) else {
+        return 0;
     };
 
     if dst_size < tight_compress_bound(src.len(), table_log as usize) || table_log > 11 {
@@ -1045,27 +1045,45 @@ fn compress_ctable_internal(
 const SUSPECT_INCOMPRESSIBLE_SAMPLE_SIZE: usize = 4096;
 const SUSPECT_INCOMPRESSIBLE_SAMPLE_RATIO: usize = 10; // must be >= 2
 
+/// What a Huffman coding of literals may use: symbols up to `max_symbol_value`, a table of
+/// at most `max_log` bits, and the original's flags.
+#[derive(Clone, Copy)]
+pub(crate) struct HufParams {
+    pub(crate) max_symbol_value: u32,
+    pub(crate) max_log: u32,
+    pub(crate) nb_streams: HufNbStreams,
+    /// `HUF_flags_preferRepeat`: reuse the previous table when it is valid, without
+    /// weighing a new one.
+    pub(crate) prefer_repeat: bool,
+    /// `HUF_flags_suspectUncompressible`: sample the input first and give up early when it
+    /// looks random.
+    pub(crate) suspect_uncompressible: bool,
+    /// `HUF_flags_optimalDepth`: search for the table depth that codes smallest.
+    pub(crate) optimal_depth: bool,
+}
+
 /// What `HUF_compress1X_repeat` and `HUF_compress4X_repeat` share (`HUF_compress_internal`):
 /// `src` as a Huffman table and its streams, or as streams of the table of the block before
 /// (`old_huf_table`, where `repeat` allows it; `repeat` is `None` afterwards if the table
 /// is new). 0 if `src` is not worth it, 1 if it is one byte over and over.
-///
-/// `prefer_repeat`, `suspect_uncompressible` and `optimal_depth` are the original's
-/// `HUF_flags_preferRepeat`, `HUF_flags_suspectUncompressible` and `HUF_flags_optimalDepth`.
-#[allow(clippy::too_many_arguments)]
+// (Follows zstd's function step for step.)
+#[allow(clippy::too_many_lines)]
 pub(crate) fn compress_repeat(
     dst: &mut [u8],
     src: &[u8],
-    mut max_symbol_value: u32,
-    mut huff_log: u32,
-    nb_streams: HufNbStreams,
+    params: HufParams,
     table: &mut HufCompressTables,
     old_huf_table: &mut HufCTable,
     repeat: &mut HufRepeat,
-    prefer_repeat: bool,
-    suspect_uncompressible: bool,
-    optimal_depth: bool,
 ) -> CResult<usize> {
+    let HufParams {
+        mut max_symbol_value,
+        max_log: mut huff_log,
+        nb_streams,
+        prefer_repeat,
+        suspect_uncompressible,
+        optimal_depth,
+    } = params;
     let src_size = src.len();
     let dst_size = dst.len();
     let mut op = 0usize;

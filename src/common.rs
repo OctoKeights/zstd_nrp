@@ -15,6 +15,9 @@ pub(crate) type CResult<T> = Result<T, CError>;
 
 /// `ZSTD_highbit32`: the place of the highest set bit. The original leaves 0 undefined;
 /// nothing asks for it.
+// (`ilog2` checks for zero, which the `| 1` already rules out; the compiler keeps the check,
+// in the optimal parser's innermost loop.)
+#[allow(clippy::manual_ilog2)]
 #[inline]
 pub(crate) fn highbit32(val: u32) -> u32 {
     debug_assert!(val != 0);

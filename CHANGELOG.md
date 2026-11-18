@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.1
+
+- **Stricter lints, enforced in CI.** `Cargo.toml` turns on clippy's pedantic group for every
+  target, and forbids `unsafe` code in the tests, examples and benchmarks as well as the
+  library. Functions that return a `Result` document their errors.
+
+- **No panics in `compress`.** A failure inside the compressor, which would be a bug, is now
+  `CompressError::Internal` in place of a panic. (`CompressError` is `non_exhaustive`, so
+  this is not a breaking change.)
+
+- **Idiomatic internals.** The three kinds of sequence code (literal lengths, offsets and
+  match lengths) are described once each, in a `SymbolType`, and their tables are built and
+  written by one loop in place of three copies. The Huffman and literal compressors take
+  their settings as structs (`HufParams`, `LiteralOptions`) in place of long lists of
+  arguments.
+
+- Output is unchanged, checked against zstd on 4,000 sources compressed, two of over 64
+  megabytes, and 20,000 frames decoded. Compression runs 0.02% to 0.9% fewer instructions,
+  depending on the level and the data.
+
 ## 0.2.0
 
 - **Breaking: an idiomatic API.** `compress` takes a `Level` (with `Level::MIN`,

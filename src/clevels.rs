@@ -1,6 +1,8 @@
 //! The parameters of the levels: `lib/compress/clevels.h` of zstd v1.5.7.
 
-use super::zstd_compress::Strategy::{self, *};
+use super::zstd_compress::Strategy::{
+    self, Btlazy2, Btopt, Btultra, Btultra2, Dfast, Fast, Greedy, Lazy, Lazy2,
+};
 
 pub(crate) const ZSTD_CLEVEL_DEFAULT: i32 = 3;
 pub(crate) const ZSTD_MAX_CLEVEL: i32 = 22;

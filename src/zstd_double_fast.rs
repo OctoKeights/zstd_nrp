@@ -27,6 +27,8 @@ enum Found {
 /// `ZSTD_compressBlock_doubleFast`: the sequences of the block
 /// `src[istart..istart + src_size]` go to `seq_store`. The answer is how many bytes at the
 /// end of the block no sequence covers.
+// (One match-finding loop, as zstd's, its state shared throughout.)
+#[allow(clippy::too_many_lines)]
 pub(crate) fn compress_block_double_fast(
     ms: &mut MatchState,
     seq_store: &mut SeqStore,
@@ -35,6 +37,8 @@ pub(crate) fn compress_block_double_fast(
     istart: usize,
     src_size: usize,
 ) -> usize {
+    const BASE: usize = ZSTD_WINDOW_START_INDEX as usize;
+    const K_STEP_INCR: usize = 1 << K_SEARCH_STRENGTH;
     // (The original has one copy of the function per minimum match.)
     let mls = match ms.cparams.min_match {
         m @ 5..=7 => m,
@@ -44,7 +48,6 @@ pub(crate) fn compress_block_double_fast(
     let h_bits_s = ms.cparams.chain_log;
     let window_log = ms.cparams.window_log;
     // `base + index` is `index - BASE` here, and `ptr - base` is `ptr + BASE`.
-    const BASE: usize = ZSTD_WINDOW_START_INDEX as usize;
     let mut anchor = istart;
     let end_index = (istart + BASE + src_size) as u32;
     // presumes that, if there is a dictionary, it must be using Attach mode
@@ -57,8 +60,6 @@ pub(crate) fn compress_block_double_fast(
     let mut offset_2 = rep[1];
     let mut offset_saved1 = 0u32;
     let mut offset_saved2 = 0u32;
-
-    const K_STEP_INCR: usize = 1 << K_SEARCH_STRENGTH;
 
     let mut ip = istart; // the position at which we are currently searching
 
@@ -127,7 +128,8 @@ pub(crate) fn compress_block_double_fast(
             if idxl0 >= prefix_lowest_index && read64(src, matchl0) == read64(src, ip) {
                 m_length = count(src, ip + 8, matchl0 + 8, iend) + 8;
                 offset = (ip - matchl0) as u32;
-                while ((ip > anchor) & (matchl0 > prefix_lowest))
+                while (ip > anchor)
+                    && (matchl0 > prefix_lowest)
                     && (src[ip - 1] == src[matchl0 - 1])
                 {
                     // catch up
@@ -184,7 +186,8 @@ pub(crate) fn compress_block_double_fast(
                         }
                     }
 
-                    while ((ip > anchor) & (matchs0 > prefix_lowest))
+                    while (ip > anchor)
+                        && (matchs0 > prefix_lowest)
                         && (src[ip - 1] == src[matchs0 - 1])
                     {
                         // Complete backward.

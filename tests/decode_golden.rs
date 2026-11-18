@@ -50,7 +50,7 @@ fn badly_damaged_frames_are_decoded_or_refused() {
             // A few bytes made up, in the frame and now and then in the dictionary; now and
             // then the end cut off.
             if !frame.is_empty() {
-                for _ in 0..1 + r.next() % 4 {
+                for _ in 0..=(r.next() % 4) {
                     let place = r.next() as usize % frame.len();
                     frame[place] = r.next() as u8;
                 }
@@ -59,7 +59,7 @@ fn badly_damaged_frames_are_decoded_or_refused() {
                 }
             }
             if !dict.is_empty() && r.next().is_multiple_of(4) {
-                for _ in 0..1 + r.next() % 4 {
+                for _ in 0..=(r.next() % 4) {
                     let place = r.next() as usize % dict.len().min(300);
                     dict[place] = r.next() as u8;
                 }

@@ -35,10 +35,14 @@ fn text_like(len: usize) -> Vec<u8> {
     let mut data = Vec::with_capacity(len + 16);
     while data.len() < len {
         state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         data.extend_from_slice(WORDS[(state >> 60) as usize].as_bytes());
-        data.push(if state >> 58 & 3 == 0 { b'.' } else { b' ' });
+        data.push(if (state >> 58).trailing_zeros() >= 2 {
+            b'.'
+        } else {
+            b' '
+        });
     }
     data.truncate(len);
     data
@@ -50,8 +54,8 @@ fn binary_like(len: usize) -> Vec<u8> {
     let mut data = Vec::with_capacity(len);
     while data.len() < len {
         state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         let run = 1 + (state >> 59) as usize;
         match state >> 56 & 3 {
             0 => data.extend(std::iter::repeat_n((state >> 40) as u8, run * 4)),

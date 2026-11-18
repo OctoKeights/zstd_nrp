@@ -447,6 +447,7 @@ fn row_next_cached_hash(ms: &mut MatchState, src: &[u8], idx: u32, mls: u32) -> 
 
 /// `ZSTD_row_update_internalImpl`: the places from `update_start_idx` to `update_end_idx`
 /// into the hash table.
+// (Zstd's parameters, each a separate part of the search's state.)
 #[allow(clippy::too_many_arguments)]
 fn row_update_internal_impl(
     ms: &mut MatchState,
@@ -488,11 +489,11 @@ fn row_update_internal(
     row_log: u32,
     row_mask: u32,
 ) {
-    let mut idx = ms.next_to_update;
-    let target = (ip + ms.window.base as usize) as u32;
     const K_SKIP_THRESHOLD: u32 = 384;
     const K_MAX_MATCH_START_POSITIONS_TO_UPDATE: u32 = 96;
     const K_MAX_MATCH_END_POSITIONS_TO_UPDATE: u32 = 32;
+    let mut idx = ms.next_to_update;
+    let target = (ip + ms.window.base as usize) as u32;
 
     // (With the hash cache.) If we decide to skip, then we only update a set number of
     // positions at the beginning and end of the match.
@@ -555,10 +556,7 @@ fn row_find_best_match(
     let mut ml = 4 - 1;
 
     // Update the hashTable and tagTable up to (but not including) ip.
-    let hash = if !ms.lazy_skipping {
-        row_update_internal(ms, src, ip, mls, row_log, row_mask);
-        row_next_cached_hash(ms, src, curr, mls)
-    } else {
+    let hash = if ms.lazy_skipping {
         // Stop inserting every position when in the lazy skipping mode. The hash cache is
         // also not kept up to date in this mode.
         ms.next_to_update = curr;
@@ -569,6 +567,9 @@ fn row_find_best_match(
             mls,
             ms.hash_salt,
         )
+    } else {
+        row_update_internal(ms, src, ip, mls, row_log, row_mask);
+        row_next_cached_hash(ms, src, curr, mls)
     };
 
     // Get the hash for ip, compute the appropriate row.
@@ -628,8 +629,9 @@ fn row_find_best_match(
 
 /// `ZSTD_searchMax`: the length of the longest match from `ip`, and its offset, by the
 /// search method.
-#[inline]
+// (Zstd's parameters, each a separate part of the search's state.)
 #[allow(clippy::too_many_arguments)]
+#[inline]
 fn search_max(
     ms: &mut MatchState,
     src: &[u8],
@@ -658,7 +660,9 @@ fn gain(a: usize, b: u32, c: i64) -> i32 {
 /// `src[istart..istart + src_size]` go to `seq_store`. `depth` is 0 for the greedy
 /// strategy, 1 for the lazy one, 2 for the second lazy one. The answer is how many bytes at
 /// the end of the block no sequence covers.
-#[allow(clippy::too_many_arguments)]
+// (One match-finding loop, as zstd's, its state shared throughout; its parameters are
+// zstd's, each a separate part of the search's state.)
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) fn compress_block_lazy(
     ms: &mut MatchState,
     seq_store: &mut SeqStore,
@@ -732,7 +736,7 @@ pub(crate) fn compress_block_lazy(
         if !found_repeat {
             // first search (depth 0)
             {
-                let mut offbase_found = 999999999u32;
+                let mut offbase_found = 999_999_999_u32;
                 let ml2 = search_max(
                     ms,
                     src,
@@ -779,7 +783,7 @@ pub(crate) fn compress_block_lazy(
                         }
                     }
                     {
-                        let mut ofb_candidate = 999999999u32;
+                        let mut ofb_candidate = 999_999_999_u32;
                         let ml2 = search_max(
                             ms,
                             src,
@@ -817,7 +821,7 @@ pub(crate) fn compress_block_lazy(
                             }
                         }
                         {
-                            let mut ofb_candidate = 999999999u32;
+                            let mut ofb_candidate = 999_999_999_u32;
                             let ml2 = search_max(
                                 ms,
                                 src,

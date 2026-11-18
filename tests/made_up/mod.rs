@@ -14,6 +14,8 @@
 
 /// The two programs make the same blocks from the same seed: a 64-bit linear congruential
 /// generator, the high half of its state.
+use std::fmt::Write;
+
 pub struct Random {
     pub state: u64,
 }
@@ -22,8 +24,8 @@ impl Random {
     pub fn next(&mut self) -> u32 {
         self.state = self
             .state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         (self.state >> 32) as u32
     }
 }
@@ -36,14 +38,14 @@ pub struct Hash {
 impl Hash {
     pub fn new() -> Hash {
         Hash {
-            value: 14695981039346656037,
+            value: 14_695_981_039_346_656_037,
         }
     }
 
     pub fn add(&mut self, data: &[u8]) {
         for &byte in data {
             self.value ^= u64::from(byte);
-            self.value = self.value.wrapping_mul(1099511628211);
+            self.value = self.value.wrapping_mul(1_099_511_628_211);
         }
     }
 }
@@ -93,7 +95,7 @@ pub fn zstd_decode(name: &str, count: u32, file: &[u8]) -> String {
                 decoded += 1;
             }
             Err(error) => {
-                hash.add(&0xffffffffu32.to_le_bytes());
+                hash.add(&0xffff_ffff_u32.to_le_bytes());
                 hash.add(error.message().as_bytes());
                 hash.add(&[0]);
                 refused += 1;
@@ -101,7 +103,7 @@ pub fn zstd_decode(name: &str, count: u32, file: &[u8]) -> String {
         }
 
         if (i + 1) % 200 == 0 || i + 1 == count {
-            out += &format!("{name} {} {:016x}\n", i + 1, hash.value);
+            writeln!(out, "{name} {} {:016x}", i + 1, hash.value).unwrap();
         }
     }
     out + &format!(
@@ -116,6 +118,8 @@ const ZSTD_WORDS: [&str; 16] = [
 
 /// Synthetic bytes of one of thirteen kinds, as `FillData` in `compare/dump_zstd_compress.c`
 /// makes them.
+// (One function, as the C generator has it, so that the two read alike.)
+#[allow(clippy::too_many_lines)]
 pub fn fill_data(r: &mut Random, buf: &mut [u8], kind: u32) {
     let len = buf.len();
     let mut at = 0;
@@ -216,7 +220,7 @@ pub fn fill_data(r: &mut Random, buf: &mut [u8], kind: u32) {
         // parts of the kinds above, one after the other
         8 => {
             while at < len {
-                let mut n = 1 + r.next() as usize % 200000;
+                let mut n = 1 + r.next() as usize % 200_000;
                 let part = r.next() % 8;
                 if n > len - at {
                     n = len - at;
@@ -272,7 +276,7 @@ pub fn fill_data(r: &mut Random, buf: &mut [u8], kind: u32) {
             while at < len {
                 let pick = if at > 1000 { r.next() % 30000 } else { 1 };
                 if pick == 0 {
-                    let reach = at.min(100000);
+                    let reach = at.min(100_000);
                     let dist = 1 + r.next() as usize % reach;
                     let n = 8 + r.next() % 300;
                     for _ in 0..n {
@@ -292,7 +296,7 @@ pub fn fill_data(r: &mut Random, buf: &mut [u8], kind: u32) {
 }
 
 const ZSTD_LEVELS: [i32; 20] = [
-    1, 1, 2, 2, 3, 3, 3, 0, 4, 4, -1, -1, -2, -3, -5, -7, -20, -100, -1000, -200000,
+    1, 1, 2, 2, 3, 3, 3, 0, 4, 4, -1, -1, -2, -3, -5, -7, -20, -100, -1000, -200_000,
 ];
 
 /// The `zstd_compress` dumps: synthetic data compressed at the levels that are ported, as
@@ -312,7 +316,7 @@ pub fn zstd_compress(name: &str, seed: u64, count: u32, check: bool) -> String {
 /// The `zstd_compress` dumps, and the `zstd_compress_more` ones (levels 4 to 22), where a
 /// level whose strategy for the size is past `highest` is taken as level 3.
 pub fn zstd_compress_up_to(name: &str, seed: u64, count: u32, check: bool, highest: u32) -> String {
-    const MAX_DATA: u32 = 5000000;
+    const MAX_DATA: u32 = 5_000_000;
     let small = name == "zstd_compress_small";
     let more = name.starts_with("zstd_compress_more");
     let more_small = name == "zstd_compress_more_small";
@@ -329,12 +333,12 @@ pub fn zstd_compress_up_to(name: &str, seed: u64, count: u32, check: bool, highe
             1..=4 => 300,
             5..=8 => 5000,
             9..=11 => 40000,
-            12..=13 => 300000,
-            14 => 1500000,
+            12..=13 => 300_000,
+            14 => 1_500_000,
             _ => MAX_DATA,
         };
-        if small && max > 300000 {
-            max = 300000;
+        if small && max > 300_000 {
+            max = 300_000;
         }
         if more_small && max > 40000 {
             max = 40000;
@@ -355,7 +359,7 @@ pub fn zstd_compress_up_to(name: &str, seed: u64, count: u32, check: bool, highe
         // A block of nothing but matches of four bytes has so many sequences that their
         // number is written the long way: it takes level 3 and a source of exactly this size.
         if kind == 12 && r.next() % 2 == 0 {
-            len = 262144;
+            len = 262_144;
             level = 3;
         }
         // Level 4 takes a strategy that is ported for these sizes only.
@@ -387,12 +391,14 @@ pub fn zstd_compress_up_to(name: &str, seed: u64, count: u32, check: bool, highe
         in_total += len as u64;
         frame_total += frame.len() as u64;
         if (i + 1) % 10 == 0 || i + 1 == count {
-            out.push_str(&format!("{name} {} {:016x}\n", i + 1, hash.value));
+            writeln!(out, "{name} {} {:016x}", i + 1, hash.value).unwrap();
         }
     }
-    out.push_str(&format!(
-        "{name} bytes: {in_total}; bytes of frames: {frame_total}\n"
-    ));
+    writeln!(
+        out,
+        "{name} bytes: {in_total}; bytes of frames: {frame_total}"
+    )
+    .unwrap();
     out
 }
 
@@ -405,14 +411,14 @@ pub fn zstd_compress_long(name: &str, seed: u64, count: u32, check: bool) -> Str
     let (mut in_total, mut frame_total) = (0u64, 0u64);
     let mut out = String::new();
     for i in 0..count {
-        let len = 64 * 1024 * 1024 + (r.next() % 16000000) as usize;
+        let len = 64 * 1024 * 1024 + (r.next() % 16_000_000) as usize;
         let level = 22;
         let mut data = vec![0u8; len];
         let mut at = 0;
         while at < len {
-            let piece = (1 + (r.next() % 4000000) as usize).min(len - at);
-            if at > 1000000 && r.next().is_multiple_of(2) {
-                let dist = 1 + r.next() as usize % at.min(70000000);
+            let piece = (1 + (r.next() % 4_000_000) as usize).min(len - at);
+            if at > 1_000_000 && r.next().is_multiple_of(2) {
+                let dist = 1 + r.next() as usize % at.min(70_000_000);
                 let changes = r.next() % 16;
                 for i in at..at + piece {
                     data[i] = data[i - dist];
@@ -441,11 +447,13 @@ pub fn zstd_compress_long(name: &str, seed: u64, count: u32, check: bool) -> Str
         hash.add(&frame);
         in_total += len as u64;
         frame_total += frame.len() as u64;
-        out.push_str(&format!("{name} {} {:016x}\n", i + 1, hash.value));
+        writeln!(out, "{name} {} {:016x}", i + 1, hash.value).unwrap();
     }
-    out.push_str(&format!(
-        "{name} bytes: {in_total}; bytes of frames: {frame_total}\n"
-    ));
+    writeln!(
+        out,
+        "{name} bytes: {in_total}; bytes of frames: {frame_total}"
+    )
+    .unwrap();
     out
 }
 
@@ -510,7 +518,7 @@ fn make_literals(r: &mut Random, buf: &mut [u8]) {
 fn entropy_code(answer: &Result<usize, u32>) -> u32 {
     match answer {
         Ok(size) => *size as u32,
-        Err(code) => 0x80000000 + code,
+        Err(code) => 0x8000_0000 + code,
     }
 }
 
@@ -532,6 +540,8 @@ impl Entropy {
         self.hash.add(&value.to_le_bytes());
     }
 
+    // (One function, as the C generator has it, so that the two read alike.)
+    #[allow(clippy::too_many_lines)]
     fn try_fse(&mut self) {
         use zstd_nrp::compare_hooks as hooks;
         let mut count = [0u32; 256];
@@ -607,7 +617,7 @@ impl Entropy {
             }
         }
         for s in 0..=max as usize {
-            self.number(norm[s] as i32 as u32);
+            self.number(i32::from(norm[s]) as u32);
         }
 
         let mut room = 512;
@@ -616,12 +626,11 @@ impl Entropy {
         }
         let answer = hooks::fse_write_ncount(&mut header[..room as usize], &norm, max, table_log);
         self.number(entropy_code(&answer));
-        match answer {
-            Ok(size) => self.hash.add(&header[..size]),
-            Err(_) => {
-                self.errors += 1;
-                return;
-            }
+        if let Ok(size) = answer {
+            self.hash.add(&header[..size]);
+        } else {
+            self.errors += 1;
+            return;
         }
 
         let mut p = 0;
@@ -668,12 +677,12 @@ impl Entropy {
                 3..=4 => pick % 3000,
                 5 => 900 + pick % 300,
                 6 => 16000 + pick % 1000,
-                _ => pick % 131200,
+                _ => pick % 131_200,
             };
             self.lit.clear();
             self.lit.resize(len as usize, 0);
             make_literals(&mut self.r, &mut self.lit);
-            repeat = if self.r.next() % 3 == 0 { 1 } else { 0 };
+            repeat = u32::from(self.r.next() % 3 == 0);
         }
         let four = self.r.next() & 1 != 0;
         let prefer = self.r.next() & 1 != 0;
@@ -756,10 +765,10 @@ pub fn zstd_entropy(seed: u64, count: u32) -> String {
         outputs: 0,
         errors: 0,
         lit: Vec::new(),
-        out: vec![0u8; 150000],
-        huf: Default::default(),
+        out: vec![0u8; 150_000],
+        huf: zstd_nrp::compare_hooks::Huf::default(),
         fresh: false,
-        literals: Default::default(),
+        literals: zstd_nrp::compare_hooks::Literals::default(),
     };
     let mut out = String::new();
     for i in 0..count {
@@ -772,12 +781,9 @@ pub fn zstd_entropy(seed: u64, count: u32) -> String {
             e.try_literals();
         }
         if (i + 1) % 1000 == 0 || i + 1 == count {
-            out.push_str(&format!("{name} {} {:016x}\n", i + 1, e.hash.value));
+            writeln!(out, "{name} {} {:016x}", i + 1, e.hash.value).unwrap();
         }
     }
-    out.push_str(&format!(
-        "{name} outputs: {}, refused: {}\n",
-        e.outputs, e.errors
-    ));
+    writeln!(out, "{name} outputs: {}, refused: {}", e.outputs, e.errors).unwrap();
     out
 }

@@ -6,9 +6,38 @@
 //! the stream keeps eight bytes of the output in hand.
 
 const BIT_MASK: [u32; 32] = [
-    0, 1, 3, 7, 0xF, 0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF,
-    0xFFFF, 0x1FFFF, 0x3FFFF, 0x7FFFF, 0xFFFFF, 0x1FFFFF, 0x3FFFFF, 0x7FFFFF, 0xFFFFFF, 0x1FFFFFF,
-    0x3FFFFFF, 0x7FFFFFF, 0xFFFFFFF, 0x1FFFFFFF, 0x3FFFFFFF, 0x7FFFFFFF,
+    0,
+    1,
+    3,
+    7,
+    0xF,
+    0x1F,
+    0x3F,
+    0x7F,
+    0xFF,
+    0x1FF,
+    0x3FF,
+    0x7FF,
+    0xFFF,
+    0x1FFF,
+    0x3FFF,
+    0x7FFF,
+    0xFFFF,
+    0x1FFFF,
+    0x3FFFF,
+    0x7FFFF,
+    0xFFFFF,
+    0x001F_FFFF,
+    0x003F_FFFF,
+    0x007F_FFFF,
+    0x00FF_FFFF,
+    0x01FF_FFFF,
+    0x03FF_FFFF,
+    0x07FF_FFFF,
+    0x0FFF_FFFF,
+    0x1FFF_FFFF,
+    0x3FFF_FFFF,
+    0x7FFF_FFFF,
 ];
 
 /// `BIT_CStream_t`.
@@ -40,7 +69,7 @@ impl<'a> BitCStream<'a> {
     /// `BIT_addBits`: the low `nb_bits` bits of `value`. `nb_bits` is under 32.
     #[inline]
     pub(crate) fn add_bits(&mut self, value: u64, nb_bits: u32) {
-        self.bit_container |= (value & BIT_MASK[nb_bits as usize] as u64) << self.bit_pos;
+        self.bit_container |= (value & u64::from(BIT_MASK[nb_bits as usize])) << self.bit_pos;
         self.bit_pos += nb_bits;
     }
 
