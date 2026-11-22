@@ -29,7 +29,7 @@ refuses a damaged one with the original's message.
 
 ```toml
 [dependencies]
-zstd_nrp = "0.2"
+zstd_nrp = "0.3"
 ```
 
 ## Quick start

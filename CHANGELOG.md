@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0
+
+- **Frame options, XXH64 checksums, multi-frame streams and `std::io` adapters.** Added
+  `CompressOptions` (`compress_with_options`, `compress_into` with optional XXH64 frame
+  checksums and content-size control), `DecompressOptions` (`decompress_with_options`,
+  `decompress_into`, `decompress_frame`, `decompress_stream` with XXH64 verification, strict
+  RFC 8878 reserved-bit checks, skippable frames and concatenated frames),
+  `DecompressErrorKind`, `Dictionary::id` / `frame_dict_id`, and (under the default `std`
+  feature) streaming `io::Encoder` and `io::Decoder`.
+
+- **`#![no_std]` and reusable contexts.** Disabling default features builds with `#![no_std]`
+  and `alloc`. Added `Compressor` and `Decompressor` to reuse match tables and entropy
+  workspaces across frames.
+
+- **Lower memory, faster decoding and hardened bounds.** Executed decoded sequences on the fly
+  instead of allocating up to 1.18 MiB of `SequenceCommand`s per block, promoted `SET_BASIC`
+  default FSE tables to `const`, moved FSE scratch buffers to the stack, fixed
+  `decompressed_size` returning `Ok(Some(0))` for explicit 0-byte non-single-segment frames,
+  made `compress_bound` saturating alongside `checked_compress_bound`, and hardened
+  `compare_hooks` and `fse_compress` against malformed inputs.
+
+- Output under default options is unchanged, checked against zstd on 4,000 sources compressed
+  and 20,000 frames decoded.
+
 ## 0.2.1
 
 - **Stricter lints, enforced in CI.** `Cargo.toml` turns on clippy's pedantic group for every
