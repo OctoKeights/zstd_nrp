@@ -1,7 +1,8 @@
 # Checks every push and pull request, with the Rust of rust-toolchain.toml: the formatting (the
-# Rust style guide's, by rustfmt), clippy, the documentation and the tests, the golden tests
-# against zstd among them. The comparison with zstd itself
-# (compare/compare.sh) needs its source and is not run here.
+# Rust style guide's, by rustfmt), clippy (all targets, all features, and no_std), the
+# documentation and the tests (both debug with overflow checks and release), the golden tests
+# against zstd among them. The comparison with zstd itself (compare/compare.sh) needs its source
+# and is not run here.
 name: CI
 
 on:
@@ -24,11 +25,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Formatting
         run: cargo fmt --check
-      - name: Clippy
-        run: cargo clippy --release --all-targets -- -D warnings
+      - name: Clippy (all targets)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Clippy (no_std)
+        run: cargo clippy --no-default-features --lib -- -D warnings
       - name: Documentation
-        run: cargo doc --no-deps
+        run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
-      - name: Tests
-        run: cargo test --release
+      - name: Tests (debug + overflow checks)
+        run: cargo test --all-features
+      - name: Tests (no_std)
+        run: cargo test --no-default-features --lib
+      - name: Tests (release)
+        run: cargo test --release --all-features
