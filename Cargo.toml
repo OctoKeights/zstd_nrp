@@ -8,9 +8,17 @@ license = "BSD-3-Clause OR GPL-2.0-only"
 repository = "https://github.com/OctoKeights/zstd_nrp"
 readme = "README.md"
 keywords = ["zstd", "zstandard", "compression", "decompression"]
-categories = ["compression"]
+categories = ["compression", "no-std"]
+exclude = [".github/", "compare/", "clippy.toml", "rust-toolchain.toml", "tests/"]
+
+[features]
+default = ["std"]
+std = []
 
 [dependencies]
+
+[profile.test]
+opt-level = 2
 
 [lints.rust]
 # No unsafe code in the library, its tests, examples or benchmarks.

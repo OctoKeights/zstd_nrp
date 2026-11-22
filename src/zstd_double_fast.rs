@@ -114,7 +114,7 @@ pub(crate) fn compress_block_double_fast(
             hash_small[hs0] = curr;
 
             // Check the no-dictionary repeat code.
-            if (offset_1 > 0) & (read32(src, ip + 1 - offset_1 as usize) == read32(src, ip + 1)) {
+            if (offset_1 > 0) && (read32(src, ip + 1 - offset_1 as usize) == read32(src, ip + 1)) {
                 m_length = count(src, ip + 1 + 4, ip + 1 + 4 - offset_1 as usize, iend) + 4;
                 ip += 1;
                 seq_store.store_seq(src, anchor, ip - anchor, REPCODE1_TO_OFFBASE, m_length);
@@ -236,11 +236,12 @@ pub(crate) fn compress_block_double_fast(
 
             // Check immediate repeat codes.
             while (ip + HASH_READ_SIZE <= iend)
-                && ((offset_2 > 0) & (read32(src, ip) == read32(src, ip - offset_2 as usize)))
+                && (offset_2 > 0)
+                && (read32(src, ip) == read32(src, ip - offset_2 as usize))
             {
                 // Store the sequence.
                 let r_length = count(src, ip + 4, ip + 4 - offset_2 as usize, iend) + 4;
-                std::mem::swap(&mut offset_1, &mut offset_2); // swap offset_2 <=> offset_1
+                core::mem::swap(&mut offset_1, &mut offset_2); // swap offset_2 <=> offset_1
                 hash_small[hash_ptr(src, ip, h_bits_s, mls)] = (ip + BASE) as u32;
                 hash_long[hash_ptr(src, ip, h_bits_l, 8)] = (ip + BASE) as u32;
                 seq_store.store_seq(src, anchor, 0, REPCODE1_TO_OFFBASE, r_length);

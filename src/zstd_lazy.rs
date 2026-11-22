@@ -887,7 +887,7 @@ pub(crate) fn compress_block_lazy(
         {
             // store sequence
             match_length = count(src, ip + 4, ip + 4 - offset_2 as usize, iend) + 4;
-            std::mem::swap(&mut offset_1, &mut offset_2); // swap repcodes
+            core::mem::swap(&mut offset_1, &mut offset_2); // swap repcodes
             seq_store.store_seq(src, anchor, 0, REPCODE1_TO_OFFBASE, match_length);
             ip += match_length;
             anchor = ip;

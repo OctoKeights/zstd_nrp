@@ -8,6 +8,9 @@
 //! a match of them, as long as it goes both ways. The optimal parser takes those matches as
 //! candidates of its own.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use super::common::{read32, read64};
 use super::zstd_compress::{
     CompressionParameters, HASH_READ_SIZE, RawSeq, Window, ZSTD_WINDOW_START_INDEX, count,
@@ -156,6 +159,138 @@ pub(crate) fn xxh64(input: &[u8], seed: u64) -> u64 {
     h64 = h64.wrapping_mul(P3);
     h64 ^= h64 >> 32;
     h64
+}
+
+/// Streaming `XXH64` state, producing the exact same digest as [`xxh64`].
+#[cfg(feature = "std")]
+#[derive(Clone)]
+pub(crate) struct Xxh64State {
+    total_len: u64,
+    seed: u64,
+    v1: u64,
+    v2: u64,
+    v3: u64,
+    v4: u64,
+    buf: [u8; 32],
+    buf_len: usize,
+}
+
+#[cfg(feature = "std")]
+impl Xxh64State {
+    const P1: u64 = 0x9E37_79B1_85EB_CA87;
+    const P2: u64 = 0xC2B2_AE3D_27D4_EB4F;
+    const P3: u64 = 0x1656_67B1_9E37_79F9;
+    const P4: u64 = 0x85EB_CA77_C2B2_AE63;
+    const P5: u64 = 0x27D4_EB2F_1656_67C5;
+
+    #[inline]
+    fn round(acc: u64, input: u64) -> u64 {
+        acc.wrapping_add(input.wrapping_mul(Self::P2))
+            .rotate_left(31)
+            .wrapping_mul(Self::P1)
+    }
+
+    #[inline]
+    fn merge_round(acc: u64, val: u64) -> u64 {
+        (acc ^ Self::round(0, val))
+            .wrapping_mul(Self::P1)
+            .wrapping_add(Self::P4)
+    }
+
+    pub(crate) fn new(seed: u64) -> Self {
+        Self {
+            total_len: 0,
+            seed,
+            v1: seed.wrapping_add(Self::P1).wrapping_add(Self::P2),
+            v2: seed.wrapping_add(Self::P2),
+            v3: seed,
+            v4: seed.wrapping_sub(Self::P1),
+            buf: [0; 32],
+            buf_len: 0,
+        }
+    }
+
+    pub(crate) fn update(&mut self, mut input: &[u8]) {
+        self.total_len = self.total_len.wrapping_add(input.len() as u64);
+        if self.buf_len + input.len() < 32 {
+            self.buf[self.buf_len..self.buf_len + input.len()].copy_from_slice(input);
+            self.buf_len += input.len();
+            return;
+        }
+        if self.buf_len > 0 {
+            let take = 32 - self.buf_len;
+            self.buf[self.buf_len..32].copy_from_slice(&input[..take]);
+            let block = self.buf;
+            self.v1 = Self::round(self.v1, read64(&block, 0));
+            self.v2 = Self::round(self.v2, read64(&block, 8));
+            self.v3 = Self::round(self.v3, read64(&block, 16));
+            self.v4 = Self::round(self.v4, read64(&block, 24));
+            self.buf_len = 0;
+            input = &input[take..];
+        }
+        let mut p = 0usize;
+        while p + 32 <= input.len() {
+            self.v1 = Self::round(self.v1, read64(input, p));
+            self.v2 = Self::round(self.v2, read64(input, p + 8));
+            self.v3 = Self::round(self.v3, read64(input, p + 16));
+            self.v4 = Self::round(self.v4, read64(input, p + 24));
+            p += 32;
+        }
+        let rem = &input[p..];
+        if !rem.is_empty() {
+            self.buf[..rem.len()].copy_from_slice(rem);
+            self.buf_len = rem.len();
+        }
+    }
+
+    pub(crate) fn finish(&self) -> u64 {
+        let mut h64 = if self.total_len >= 32 {
+            let mut acc = self
+                .v1
+                .rotate_left(1)
+                .wrapping_add(self.v2.rotate_left(7))
+                .wrapping_add(self.v3.rotate_left(12))
+                .wrapping_add(self.v4.rotate_left(18));
+            acc = Self::merge_round(acc, self.v1);
+            acc = Self::merge_round(acc, self.v2);
+            acc = Self::merge_round(acc, self.v3);
+            acc = Self::merge_round(acc, self.v4);
+            acc
+        } else {
+            self.seed.wrapping_add(Self::P5)
+        };
+        h64 = h64.wrapping_add(self.total_len);
+        let tail = &self.buf[..self.buf_len];
+        let mut p = 0usize;
+        while p + 8 <= tail.len() {
+            let k1 = Self::round(0, read64(tail, p));
+            h64 ^= k1;
+            h64 = h64
+                .rotate_left(27)
+                .wrapping_mul(Self::P1)
+                .wrapping_add(Self::P4);
+            p += 8;
+        }
+        if p + 4 <= tail.len() {
+            h64 ^= u64::from(read32(tail, p)).wrapping_mul(Self::P1);
+            h64 = h64
+                .rotate_left(23)
+                .wrapping_mul(Self::P2)
+                .wrapping_add(Self::P3);
+            p += 4;
+        }
+        while p < tail.len() {
+            h64 ^= u64::from(tail[p]).wrapping_mul(Self::P5);
+            h64 = h64.rotate_left(11).wrapping_mul(Self::P1);
+            p += 1;
+        }
+        h64 ^= h64 >> 33;
+        h64 = h64.wrapping_mul(Self::P2);
+        h64 ^= h64 >> 29;
+        h64 = h64.wrapping_mul(Self::P3);
+        h64 ^= h64 >> 32;
+        h64
+    }
 }
 
 /// `ldmParams_t`, as `ZSTD_ldm_adjustParameters` makes them of the compression parameters.
@@ -530,5 +665,22 @@ mod tests {
             xxh64(b"Nobody inspects the spammish repetition", 0),
             0xFBCE_A83C_8A37_8BF1
         );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn streaming_xxh64_matches_oneshot_for_all_chunk_sizes() {
+        use super::Xxh64State;
+        let data: alloc::vec::Vec<u8> = (0..300u32).map(|i| (i.wrapping_mul(37)) as u8).collect();
+        for len in [0, 1, 3, 4, 7, 8, 15, 31, 32, 33, 63, 64, 65, 129, 300] {
+            let expected = xxh64(&data[..len], 0);
+            for step in [1, 2, 5, 7, 16, 31, 32, 33, 64] {
+                let mut state = Xxh64State::new(0);
+                for chunk in data[..len].chunks(step) {
+                    state.update(chunk);
+                }
+                assert_eq!(state.finish(), expected, "len={len}, step={step}");
+            }
+        }
     }
 }

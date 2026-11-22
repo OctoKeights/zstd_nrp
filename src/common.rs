@@ -60,3 +60,20 @@ pub(crate) fn write_le24(dst: &mut [u8], pos: usize, value: u32) {
 pub(crate) fn write_le32(dst: &mut [u8], pos: usize, value: u32) {
     dst[pos..pos + 4].copy_from_slice(&value.to_le_bytes());
 }
+
+/// `ZSTD_isRLE` / `allBytesIdentical`: whether every byte in `src` is identical, checked
+/// eight bytes at a time.
+#[inline]
+pub(crate) fn is_rle(src: &[u8]) -> bool {
+    let Some(&first) = src.first() else {
+        return true;
+    };
+    let word = u64::from_ne_bytes([first; 8]);
+    let (chunks, remainder) = src.as_chunks::<8>();
+    for chunk in chunks {
+        if u64::from_ne_bytes(*chunk) != word {
+            return false;
+        }
+    }
+    remainder.iter().all(|&b| b == first)
+}

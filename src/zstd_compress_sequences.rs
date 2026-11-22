@@ -6,7 +6,7 @@
 
 use super::bitstream::BitCStream;
 use super::common::{CError, CResult};
-use super::fse_compress::{self, FseCState, FseCTable};
+use super::fse_compress::{self, FseCState, FseCTable, SymbolTT};
 use super::hist;
 use super::zstd_compress::{SET_BASIC, SET_COMPRESSED, SET_REPEAT, SET_RLE, SeqDef, Strategy};
 
@@ -186,6 +186,19 @@ pub(crate) fn cross_entropy_cost(
     cost >> 8
 }
 
+const DEFAULT_LL_CTABLE: (
+    [u16; 1 << LL_DEFAULT_NORM_LOG],
+    [SymbolTT; MAX_LL as usize + 1],
+) = fse_compress::build_static_ctable(&LL_DEFAULT_NORM, LL_DEFAULT_NORM_LOG);
+const DEFAULT_OF_CTABLE: (
+    [u16; 1 << OF_DEFAULT_NORM_LOG],
+    [SymbolTT; DEFAULT_MAX_OFF as usize + 1],
+) = fse_compress::build_static_ctable(&OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG);
+const DEFAULT_ML_CTABLE: (
+    [u16; 1 << ML_DEFAULT_NORM_LOG],
+    [SymbolTT; MAX_ML as usize + 1],
+) = fse_compress::build_static_ctable(&ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG);
+
 /// What zstd fixes for one of the three codes of the sequences: literal lengths, offsets or
 /// match lengths.
 pub(crate) struct SymbolType {
@@ -197,6 +210,9 @@ pub(crate) struct SymbolType {
     pub(crate) default_norm: &'static [i16],
     pub(crate) default_norm_log: u32,
     pub(crate) default_max: u32,
+    /// Precomputed `FseCTable` arrays for `SET_BASIC`.
+    pub(crate) default_state_table: &'static [u16],
+    pub(crate) default_symbol_tt: &'static [SymbolTT],
     /// The extra bits after each code; none for offsets, whose code is their number.
     pub(crate) extra_bits: Option<&'static [u8]>,
 }
@@ -208,6 +224,8 @@ pub(crate) const LITERAL_LENGTHS: SymbolType = SymbolType {
     default_norm: &LL_DEFAULT_NORM,
     default_norm_log: LL_DEFAULT_NORM_LOG,
     default_max: MAX_LL,
+    default_state_table: &DEFAULT_LL_CTABLE.0,
+    default_symbol_tt: &DEFAULT_LL_CTABLE.1,
     extra_bits: Some(&LL_BITS),
 };
 
@@ -218,6 +236,8 @@ pub(crate) const OFFSETS: SymbolType = SymbolType {
     default_norm: &OF_DEFAULT_NORM,
     default_norm_log: OF_DEFAULT_NORM_LOG,
     default_max: DEFAULT_MAX_OFF,
+    default_state_table: &DEFAULT_OF_CTABLE.0,
+    default_symbol_tt: &DEFAULT_OF_CTABLE.1,
     extra_bits: None,
 };
 
@@ -228,6 +248,8 @@ pub(crate) const MATCH_LENGTHS: SymbolType = SymbolType {
     default_norm: &ML_DEFAULT_NORM,
     default_norm_log: ML_DEFAULT_NORM_LOG,
     default_max: MAX_ML,
+    default_state_table: &DEFAULT_ML_CTABLE.0,
+    default_symbol_tt: &DEFAULT_ML_CTABLE.1,
     extra_bits: Some(&ML_BITS),
 };
 
@@ -345,9 +367,12 @@ pub(crate) fn build_ctable(
             Ok(0)
         }
         SET_BASIC => {
-            // note: could be pre-calculated
-            let (norm, norm_log) = (kind.default_norm, kind.default_norm_log);
-            fse_compress::build_ctable(next_ctable, norm, kind.default_max, norm_log);
+            next_ctable.table_log = kind.default_norm_log;
+            next_ctable.max_symbol_value = kind.default_max;
+            next_ctable.state_table[..kind.default_state_table.len()]
+                .copy_from_slice(kind.default_state_table);
+            next_ctable.symbol_tt[..kind.default_symbol_tt.len()]
+                .copy_from_slice(kind.default_symbol_tt);
             Ok(0)
         }
         _ => {
@@ -504,4 +529,26 @@ pub(crate) fn encode_sequences(
 #[inline]
 fn add_offset_bits(block_stream: &mut BitCStream, off_base: u32, of_bits: u32) {
     block_stream.add_bits(u64::from(off_base), of_bits);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn precomputed_set_basic_tables_match_runtime_build_ctable() {
+        for kind in [&LITERAL_LENGTHS, &OFFSETS, &MATCH_LENGTHS] {
+            let mut runtime = FseCTable::new(kind.fse_log, kind.max);
+            fse_compress::build_ctable(
+                &mut runtime,
+                kind.default_norm,
+                kind.default_max,
+                kind.default_norm_log,
+            );
+            let table_size = 1usize << kind.default_norm_log;
+            let symbols = kind.default_max as usize + 1;
+            assert_eq!(&runtime.state_table[..table_size], kind.default_state_table);
+            assert_eq!(&runtime.symbol_tt[..symbols], kind.default_symbol_tt);
+        }
+    }
 }

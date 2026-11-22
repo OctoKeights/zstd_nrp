@@ -824,8 +824,8 @@ pub(crate) fn compress_block_opt(
     let mut next_to_update3 = ms.next_to_update;
 
     // (The two tables, taken out of the state while the parser uses it.)
-    let mut opt = std::mem::take(&mut ms.opt.price_table);
-    let mut matches = std::mem::take(&mut ms.opt.match_table);
+    let mut opt = core::mem::take(&mut ms.opt.price_table);
+    let mut matches = core::mem::take(&mut ms.opt.match_table);
     let mut last_stretch = Optimal::default();
     let mut opt_ldm = OptLdm {
         seq: ldm.0,

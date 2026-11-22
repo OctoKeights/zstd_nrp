@@ -89,8 +89,8 @@ fn compare_fingerprints(
 }
 
 /// `mergeEvents`.
-fn merge_events(acc: &mut Fingerprint, newfp: &Fingerprint) {
-    for n in 0..HASHTABLESIZE {
+fn merge_events(acc: &mut Fingerprint, newfp: &Fingerprint, hash_log: u32) {
+    for n in 0..1usize << hash_log {
         acc.events[n] = acc.events[n].wrapping_add(newfp.events[n]);
     }
     acc.nb_events += newfp.nb_events;
@@ -121,7 +121,7 @@ fn split_block_by_chunks(block: &[u8], level: usize) -> usize {
         if compare_fingerprints(&past_events, &new_events, penalty, hash_log) {
             return pos;
         }
-        merge_events(&mut past_events, &new_events);
+        merge_events(&mut past_events, &new_events, hash_log);
         if penalty > 0 {
             penalty -= 1;
         }

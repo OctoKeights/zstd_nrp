@@ -1,7 +1,7 @@
 //! The literals section of a block: a port of `lib/compress/zstd_compress_literals.c` of
 //! zstd v1.5.7.
 
-use super::common::{CError, CResult, write_le16, write_le24, write_le32};
+use super::common::{CError, CResult, is_rle, write_le16, write_le24, write_le32};
 use super::huf_compress::{
     self, HUF_SYMBOLVALUE_MAX, HufCTable, HufCompressTables, HufNbStreams, HufParams, HufRepeat,
 };
@@ -164,9 +164,9 @@ pub(crate) fn no_compress_literals(dst: &mut [u8], src: &[u8]) -> CResult<usize>
 }
 
 /// `allBytesIdentical`.
+#[inline]
 fn all_bytes_identical(src: &[u8]) -> bool {
-    let b = src[0];
-    src[1..].iter().all(|&x| x == b)
+    is_rle(src)
 }
 
 /// `ZSTD_compressRleLiteralsBlock`: one byte and how many times it comes.

@@ -6,6 +6,9 @@
 //! are the three fields of [`FseCTable`]. The work areas that the original is handed are
 //! local to each function.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use super::bitstream::BitCStream;
 use super::common::{CError, CResult, highbit32};
 
@@ -27,7 +30,7 @@ fn fse_blockbound(size: usize) -> usize {
 }
 
 /// `FSE_symbolCompressionTransform`.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SymbolTT {
     pub(crate) delta_find_state: i32,
     pub(crate) delta_nb_bits: u32,
@@ -67,7 +70,8 @@ pub(crate) fn build_ctable(
     let step = fse_tablestep(table_size);
     let max_sv1 = max_symbol_value + 1;
     let mut cumul = [0u16; 258];
-    let mut table_symbol = vec![0u8; table_size as usize];
+    let mut table_symbol_buf = [0u8; 1 << FSE_MAX_TABLELOG];
+    let table_symbol = &mut table_symbol_buf[..table_size as usize];
     let mut high_threshold = table_size - 1;
 
     ct.table_log = table_log;
@@ -92,7 +96,8 @@ pub(crate) fn build_ctable(
         // No low probability symbol: lay the symbols down in order, then spread them. (The
         // original lays them down eight bytes at a time, writing past each run and over it
         // with the next; what is left is the same.)
-        let mut spread = vec![0u8; table_size as usize];
+        let mut spread_buf = [0u8; 1 << FSE_MAX_TABLELOG];
+        let spread = &mut spread_buf[..table_size as usize];
         let mut pos = 0usize;
         for (s, &n) in normalized_counter[..max_sv1 as usize].iter().enumerate() {
             let n = i32::from(n);
@@ -163,6 +168,86 @@ pub(crate) fn build_ctable(
             }
         }
     }
+}
+
+/// Compile-time `FSE_buildCTable_wksp` for the predefined `SET_BASIC` sequence tables.
+pub(crate) const fn build_static_ctable<const TABLE_SIZE: usize, const SYMBOLS: usize>(
+    normalized_counter: &[i16; SYMBOLS],
+    table_log: u32,
+) -> ([u16; TABLE_SIZE], [SymbolTT; SYMBOLS]) {
+    let table_size = 1u32 << table_log;
+    debug_assert!(table_size as usize == TABLE_SIZE);
+    let table_mask = table_size - 1;
+    let step = (table_size >> 1) + (table_size >> 3) + 3;
+    let mut cumul = [0u16; 258];
+    let mut table_symbol = [0u8; TABLE_SIZE];
+    let mut high_threshold = table_size - 1;
+
+    let mut u = 1usize;
+    while u <= SYMBOLS {
+        if normalized_counter[u - 1] == -1 {
+            cumul[u] = cumul[u - 1].wrapping_add(1);
+            table_symbol[high_threshold as usize] = (u - 1) as u8;
+            high_threshold = high_threshold.wrapping_sub(1);
+        } else {
+            cumul[u] = cumul[u - 1].wrapping_add(normalized_counter[u - 1] as u16);
+        }
+        u += 1;
+    }
+    cumul[SYMBOLS] = (table_size + 1) as u16;
+
+    let mut position = 0u32;
+    let mut symbol = 0usize;
+    while symbol < SYMBOLS {
+        let freq = normalized_counter[symbol] as i32;
+        let mut nb_occurrences = 0;
+        while nb_occurrences < freq {
+            table_symbol[position as usize] = symbol as u8;
+            position = (position + step) & table_mask;
+            while position > high_threshold {
+                position = (position + step) & table_mask;
+            }
+            nb_occurrences += 1;
+        }
+        symbol += 1;
+    }
+
+    let mut state_table = [0u16; TABLE_SIZE];
+    let mut idx = 0u32;
+    while idx < table_size {
+        let s = table_symbol[idx as usize] as usize;
+        state_table[cumul[s] as usize] = (table_size + idx) as u16;
+        cumul[s] = cumul[s].wrapping_add(1);
+        idx += 1;
+    }
+
+    let mut symbol_tt = [SymbolTT {
+        delta_find_state: 0,
+        delta_nb_bits: 0,
+    }; SYMBOLS];
+    let mut total = 0u32;
+    let mut s = 0usize;
+    while s < SYMBOLS {
+        let count = normalized_counter[s];
+        if count == 0 {
+            symbol_tt[s].delta_nb_bits = ((table_log + 1) << 16).wrapping_sub(1 << table_log);
+        } else if count == -1 || count == 1 {
+            symbol_tt[s].delta_nb_bits = (table_log << 16).wrapping_sub(1 << table_log);
+            symbol_tt[s].delta_find_state = total.wrapping_sub(1) as i32;
+            total += 1;
+        } else {
+            let n = count as u32;
+            let hb = ((n - 1) | 1).ilog2();
+            let max_bits_out = table_log - hb;
+            let min_state_plus = n << max_bits_out;
+            symbol_tt[s].delta_nb_bits = (max_bits_out << 16).wrapping_sub(min_state_plus);
+            symbol_tt[s].delta_find_state = total.wrapping_sub(n) as i32;
+            total += n;
+        }
+        s += 1;
+    }
+
+    (state_table, symbol_tt)
 }
 
 /// `FSE_NCountWriteBound`.
@@ -296,10 +381,23 @@ pub(crate) fn write_ncount(
     max_symbol_value: u32,
     table_log: u32,
 ) -> CResult<usize> {
+    if max_symbol_value > 255 {
+        return Err(CError::MaxSymbolValueTooLarge);
+    }
     if table_log > FSE_MAX_TABLELOG {
         return Err(CError::TableLogTooLarge);
     }
     if table_log < FSE_MIN_TABLELOG {
+        return Err(CError::Generic);
+    }
+    if normalized_counter.len() <= max_symbol_value as usize {
+        return Err(CError::Generic);
+    }
+    let max_norm = (1i32 << table_log) as i16;
+    if normalized_counter[..=max_symbol_value as usize]
+        .iter()
+        .any(|&n| n < -1 || n > max_norm)
+    {
         return Err(CError::Generic);
     }
     if buffer.len() < ncount_write_bound(max_symbol_value, table_log) {
@@ -322,8 +420,15 @@ pub(crate) fn write_ncount(
 
 /// `FSE_minTableLog`.
 fn min_table_log(src_size: usize, max_symbol_value: u32) -> u32 {
-    let min_bits_src = highbit32(src_size as u32) + 1;
-    let min_bits_symbols = highbit32(max_symbol_value) + 2;
+    if src_size == 0 {
+        return FSE_MIN_TABLELOG;
+    }
+    let min_bits_src = highbit32((src_size.min(u32::MAX as usize)) as u32) + 1;
+    let min_bits_symbols = if max_symbol_value == 0 {
+        2
+    } else {
+        highbit32(max_symbol_value) + 2
+    };
     min_bits_src.min(min_bits_symbols)
 }
 
@@ -334,9 +439,13 @@ pub(crate) fn optimal_table_log_internal(
     max_symbol_value: u32,
     minus: u32,
 ) -> u32 {
-    let max_bits_src = highbit32((src_size - 1) as u32).wrapping_sub(minus);
+    if src_size <= 1 {
+        return FSE_MIN_TABLELOG;
+    }
+    let clamped_src = src_size.min(u32::MAX as usize);
+    let max_bits_src = highbit32((clamped_src - 1) as u32).wrapping_sub(minus);
     let mut table_log = max_table_log;
-    let min_bits = min_table_log(src_size, max_symbol_value);
+    let min_bits = min_table_log(clamped_src, max_symbol_value);
     if table_log == 0 {
         table_log = FSE_DEFAULT_TABLELOG;
     }
@@ -368,7 +477,7 @@ fn normalize_m2(
 
     // Init.
     let low_threshold = (total >> table_log) as u32;
-    let mut low_one = ((total * 3) >> (table_log + 1)) as u32;
+    let mut low_one = ((total as u64 * 3) >> (table_log + 1)) as u32;
 
     for s in 0..=max_symbol_value as usize {
         if count[s] == 0 {
@@ -378,18 +487,24 @@ fn normalize_m2(
         if count[s] <= low_threshold {
             norm[s] = low_prob_count;
             distributed += 1;
-            total -= count[s] as usize;
+            total = total
+                .checked_sub(count[s] as usize)
+                .ok_or(CError::Generic)?;
             continue;
         }
         if count[s] <= low_one {
             norm[s] = 1;
             distributed += 1;
-            total -= count[s] as usize;
+            total = total
+                .checked_sub(count[s] as usize)
+                .ok_or(CError::Generic)?;
             continue;
         }
         norm[s] = NOT_YET_ASSIGNED;
     }
-    let mut to_distribute = (1u32 << table_log).wrapping_sub(distributed);
+    let Some(mut to_distribute) = (1u32 << table_log).checked_sub(distributed) else {
+        return Err(CError::Generic);
+    };
 
     if to_distribute == 0 {
         return Ok(());
@@ -397,15 +512,19 @@ fn normalize_m2(
 
     if (total / to_distribute as usize) > low_one as usize {
         // Risk of rounding to zero.
-        low_one = ((total * 3) / (to_distribute as usize * 2)) as u32;
+        low_one = ((total as u64 * 3) / (u64::from(to_distribute) * 2)) as u32;
         for s in 0..=max_symbol_value as usize {
             if norm[s] == NOT_YET_ASSIGNED && count[s] <= low_one {
                 norm[s] = 1;
                 distributed += 1;
-                total -= count[s] as usize;
+                total = total
+                    .checked_sub(count[s] as usize)
+                    .ok_or(CError::Generic)?;
             }
         }
-        to_distribute = (1u32 << table_log).wrapping_sub(distributed);
+        to_distribute = (1u32 << table_log)
+            .checked_sub(distributed)
+            .ok_or(CError::Generic)?;
     }
 
     if distributed == max_symbol_value + 1 {
@@ -424,6 +543,9 @@ fn normalize_m2(
 
     if total == 0 {
         // All of the symbols were low enough for the lowOne or lowThreshold.
+        if !norm[..=max_symbol_value as usize].iter().any(|&n| n > 0) {
+            return Err(CError::Generic);
+        }
         let mut s = 0usize;
         while to_distribute > 0 {
             if norm[s] > 0 {
@@ -472,6 +594,9 @@ pub(crate) fn normalize_count(
     use_low_prob_count: bool,
 ) -> CResult<u32> {
     // Sanity checks.
+    if max_symbol_value > 255 {
+        return Err(CError::MaxSymbolValueTooLarge);
+    }
     if table_log == 0 {
         table_log = FSE_DEFAULT_TABLELOG;
     }
@@ -480,6 +605,14 @@ pub(crate) fn normalize_count(
     }
     if table_log > FSE_MAX_TABLELOG {
         return Err(CError::TableLogTooLarge); // unsupported size
+    }
+    if total == 0 || total > u32::MAX as usize {
+        return Err(CError::Generic);
+    }
+    if normalized_counter.len() <= max_symbol_value as usize
+        || count.len() <= max_symbol_value as usize
+    {
+        return Err(CError::Generic);
     }
     if table_log < min_table_log(total, max_symbol_value) {
         return Err(CError::Generic); // too small a table log, the compression may be poor

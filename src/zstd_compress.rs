@@ -14,8 +14,15 @@
 //! where the estimates say that comes out smaller, and long-distance matching
 //! (`zstd_ldm`) for a window of 128 MB or more.
 
+use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt;
+
 use super::clevels::{ZSTD_CLEVEL_DEFAULT, ZSTD_DEFAULT_CPARAMETERS, ZSTD_MAX_CLEVEL};
-use super::common::{CError, CResult, highbit32, read16, read32, read64, write_le24, write_le32};
+use super::common::{
+    CError, CResult, highbit32, is_rle, read16, read32, read64, write_le24, write_le32,
+};
 use super::fse_compress::FseCTable;
 use super::hist;
 use super::huf_compress::{HufCompressTables, HufRepeat};
@@ -107,18 +114,94 @@ pub(crate) struct CompressionParameters {
     pub(crate) strategy: Strategy,
 }
 
-/// `ZSTD_COMPRESSBOUND`: the most bytes a frame can take for a source of `src_size` bytes.
+/// `ZSTD_COMPRESSBOUND`: the most bytes a frame can take for a source of `src_size` bytes,
+/// saturating at [`usize::MAX`] on overflow.
+///
 /// It is what [`compress`] gives its output to start with, as the bytes depend on the room
-/// there is in a few places.
+/// there is in a few places. Use [`checked_compress_bound`] to detect arithmetic overflow.
 #[must_use]
-pub fn compress_bound(src_size: usize) -> usize {
+pub const fn compress_bound(src_size: usize) -> usize {
+    let margin = if src_size < (128 << 10) {
+        ((128 << 10) - src_size) >> 11
+    } else {
+        0
+    };
     src_size
-        + (src_size >> 8)
-        + if src_size < (128 << 10) {
-            ((128 << 10) - src_size) >> 11
-        } else {
-            0
+        .saturating_add(src_size >> 8)
+        .saturating_add(margin)
+}
+
+/// Checked version of [`compress_bound`]: returns `None` if computing the worst-case bound
+/// overflows `usize`.
+#[must_use]
+pub const fn checked_compress_bound(src_size: usize) -> Option<usize> {
+    let margin = if src_size < (128 << 10) {
+        ((128 << 10) - src_size) >> 11
+    } else {
+        0
+    };
+    match src_size.checked_add(src_size >> 8) {
+        Some(sum) => sum.checked_add(margin),
+        None => None,
+    }
+}
+
+/// Options for compressing a Zstandard frame with [`compress_with_options`] or
+/// [`Compressor::compress_with_options`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CompressOptions {
+    /// Compression level (defaults to [`Level::DEFAULT`]).
+    pub level: Level,
+    /// Whether to write the 32-bit `XXH64` content checksum at the end of the frame
+    /// (defaults to `false`, matching `ZSTD_compress`).
+    pub checksum: bool,
+    /// Whether to record the uncompressed content size in the frame header
+    /// (defaults to `true`, matching `ZSTD_compress`).
+    pub include_content_size: bool,
+}
+
+impl Default for CompressOptions {
+    fn default() -> Self {
+        CompressOptions {
+            level: Level::DEFAULT,
+            checksum: false,
+            include_content_size: true,
         }
+    }
+}
+
+impl CompressOptions {
+    /// Options at `level` with default framing (`checksum: false`,
+    /// `include_content_size: true`).
+    #[must_use]
+    pub const fn new(level: Level) -> Self {
+        CompressOptions {
+            level,
+            checksum: false,
+            include_content_size: true,
+        }
+    }
+
+    /// Sets the compression [`Level`].
+    #[must_use]
+    pub const fn with_level(mut self, level: Level) -> Self {
+        self.level = level;
+        self
+    }
+
+    /// Sets whether to write the 32-bit `XXH64` content checksum trailer.
+    #[must_use]
+    pub const fn with_checksum(mut self, checksum: bool) -> Self {
+        self.checksum = checksum;
+        self
+    }
+
+    /// Sets whether to write `Frame_Content_Size` in the frame header.
+    #[must_use]
+    pub const fn with_content_size(mut self, include_content_size: bool) -> Self {
+        self.include_content_size = include_content_size;
+        self
+    }
 }
 
 /// `ZSTD_adjustCParams_internal`, for a source of a known size and no dictionary: the
@@ -534,6 +617,27 @@ impl OptState {
             price_type: PriceType::Dynamic,
         }
     }
+
+    fn reset(&mut self, used: bool) {
+        let size = if used { ZSTD_OPT_NUM as usize + 3 } else { 0 };
+        self.lit_freq = [0; 256];
+        self.lit_length_freq = [0; MAX_LL as usize + 1];
+        self.match_length_freq = [0; MAX_ML as usize + 1];
+        self.off_code_freq = [0; MAX_OFF as usize + 1];
+        self.match_table.clear();
+        self.match_table.resize(size, OptMatch::default());
+        self.price_table.clear();
+        self.price_table.resize(size, Optimal::default());
+        self.lit_sum = 0;
+        self.lit_length_sum = 0;
+        self.match_length_sum = 0;
+        self.off_code_sum = 0;
+        self.lit_sum_base_price = 0;
+        self.lit_length_sum_base_price = 0;
+        self.match_length_sum_base_price = 0;
+        self.off_code_sum_base_price = 0;
+        self.price_type = PriceType::Dynamic;
+    }
 }
 
 /// `ZSTD_getLowestMatchIndex`: the lowest index a match may have from `curr`.
@@ -747,6 +851,15 @@ impl CompressedBlockState {
             rep: REP_START_VALUE,
         }
     }
+
+    fn reset(&mut self) {
+        self.entropy.huf.ctable.fill(0);
+        self.entropy.huf.repeat_mode = HufRepeat::None;
+        self.entropy.fse.offcode_repeat_mode = FseRepeat::None;
+        self.entropy.fse.matchlength_repeat_mode = FseRepeat::None;
+        self.entropy.fse.litlength_repeat_mode = FseRepeat::None;
+        self.rep = REP_START_VALUE;
+    }
 }
 
 /// What `ZSTD_buildSequencesStatistics` answers with (`ZSTD_symbolEncodingTypeStats_t`).
@@ -955,15 +1068,8 @@ fn estimate_block_size_symbol_type(
     c_symbol_type_size_estimate_in_bits >> 3
 }
 
-/// `ZSTD_isRLE`: whether the block is one byte over and over. (The original compares
-/// eight bytes at a time.)
-fn is_rle(src: &[u8]) -> bool {
-    let value = src[0];
-    src.iter().all(|&b| b == value)
-}
-
 /// `ZSTD_CCtx`, as far as one call of `ZSTD_compress` uses it.
-struct CCtx {
+pub(crate) struct CCtx {
     /// `appliedParams.cParams`.
     cparams: CompressionParameters,
     block_size_max: usize,
@@ -1061,6 +1167,124 @@ impl CCtx {
             count: [0; MAX_SEQ + 1],
             huf_workspace: Box::new(HufCompressTables::new()),
         }
+    }
+
+    /// Resets this context for a new frame of `pledged_src_size` bytes without dropping its
+    /// heap tables when their capacities already suffice.
+    fn reset_for_frame(&mut self, cparams: CompressionParameters, pledged_src_size: u64) {
+        let window_size = 1usize.max((1u64 << cparams.window_log).min(pledged_src_size) as usize);
+        let block_size = ZSTD_BLOCKSIZE_MAX.min(window_size);
+        let use_row = row_match_finder_used(&cparams);
+        let chain_size = if cparams.strategy != Strategy::Fast && !use_row {
+            1usize << cparams.chain_log
+        } else {
+            0
+        };
+        let h_size = 1usize << cparams.hash_log;
+        let hash_log3 = if cparams.min_match == 3 {
+            ZSTD_HASHLOG3_MAX.min(cparams.window_log)
+        } else {
+            0
+        };
+        let h3_size = if hash_log3 != 0 {
+            1usize << hash_log3
+        } else {
+            0
+        };
+        let tag_size = if use_row { h_size } else { 0 };
+
+        self.cparams = cparams;
+        self.block_size_max = block_size;
+        self.is_first_block = true;
+        self.stage_ending = false;
+        self.consumed_src_size = 0;
+        self.produced_c_size = 0;
+        self.prev_cblock.reset();
+        self.next_cblock.reset();
+
+        self.match_state.window = Window {
+            base: ZSTD_WINDOW_START_INDEX,
+            dict_limit: ZSTD_WINDOW_START_INDEX,
+            low_limit: ZSTD_WINDOW_START_INDEX,
+        };
+        self.match_state.loaded_dict_end = 0;
+        self.match_state.next_to_update = ZSTD_WINDOW_START_INDEX;
+        self.match_state.hash_table.clear();
+        self.match_state.hash_table.resize(h_size, 0);
+        self.match_state.chain_table.clear();
+        self.match_state.chain_table.resize(chain_size, 0);
+        self.match_state.hash_table3.clear();
+        self.match_state.hash_table3.resize(h3_size, 0);
+        self.match_state.hash_log3 = hash_log3;
+        self.match_state.tag_table.clear();
+        self.match_state.tag_table.resize(tag_size, 0);
+        self.match_state.row_hash_log = if use_row {
+            cparams.hash_log - cparams.search_log.clamp(4, 6)
+        } else {
+            0
+        };
+        self.match_state.hash_salt = if use_row {
+            bitmix(0, 8) ^ bitmix(0, 4)
+        } else {
+            0
+        };
+        self.match_state.hash_cache = [0; ZSTD_ROW_HASH_CACHE_SIZE];
+        self.match_state.lazy_skipping = false;
+        self.match_state
+            .opt
+            .reset(cparams.strategy as u32 >= Strategy::Btopt as u32);
+        self.match_state.cparams = cparams;
+
+        self.seq_store.reset();
+        if ldm_enabled(&cparams) {
+            self.ldm = Some(Box::new(LdmState::new(&cparams, block_size)));
+        } else {
+            self.ldm = None;
+        }
+        self.ldm_sequences.clear();
+        self.count = [0; MAX_SEQ + 1];
+    }
+
+    /// Resets match-finding window and tables for a new streaming chunk while keeping block
+    /// entropy tables and repeat offsets from previous blocks of the same frame.
+    #[cfg(feature = "std")]
+    pub(crate) fn reset_match_state_for_chunk(&mut self) {
+        let cparams = self.cparams;
+        let use_row = row_match_finder_used(&cparams);
+        let chain_size = if cparams.strategy != Strategy::Fast && !use_row {
+            1usize << cparams.chain_log
+        } else {
+            0
+        };
+        let h_size = 1usize << cparams.hash_log;
+        let h3_size = if self.match_state.hash_log3 != 0 {
+            1usize << self.match_state.hash_log3
+        } else {
+            0
+        };
+        let tag_size = if use_row { h_size } else { 0 };
+
+        self.match_state.window = Window {
+            base: ZSTD_WINDOW_START_INDEX,
+            dict_limit: ZSTD_WINDOW_START_INDEX,
+            low_limit: ZSTD_WINDOW_START_INDEX,
+        };
+        self.match_state.loaded_dict_end = 0;
+        self.match_state.next_to_update = ZSTD_WINDOW_START_INDEX;
+        self.match_state.hash_table.clear();
+        self.match_state.hash_table.resize(h_size, 0);
+        self.match_state.chain_table.clear();
+        self.match_state.chain_table.resize(chain_size, 0);
+        self.match_state.hash_table3.clear();
+        self.match_state.hash_table3.resize(h3_size, 0);
+        self.match_state.tag_table.clear();
+        self.match_state.tag_table.resize(tag_size, 0);
+        self.match_state.hash_cache = [0; ZSTD_ROW_HASH_CACHE_SIZE];
+        self.match_state.lazy_skipping = false;
+        if let Some(ldm) = &mut self.ldm {
+            **ldm = LdmState::new(&cparams, self.block_size_max);
+        }
+        self.ldm_sequences.clear();
     }
 
     /// `ZSTD_literalsCompressionIsDisabled`: the fast strategy with an acceleration leaves
@@ -1365,7 +1589,7 @@ impl CCtx {
         // out:
         if matches!(c_size, Ok(size) if size > 1) {
             // `ZSTD_blockState_confirmRepcodesAndEntropyTables`.
-            std::mem::swap(&mut self.prev_cblock, &mut self.next_cblock);
+            core::mem::swap(&mut self.prev_cblock, &mut self.next_cblock);
         }
         // We check that dictionaries have offset codes available for the first block. After
         // the first block, the offcode table might not have large enough codes to represent
@@ -1634,7 +1858,7 @@ impl CCtx {
             *d_rep = d_rep_original; // reset simulated decompression repcode history
         } else {
             // `ZSTD_blockState_confirmRepcodesAndEntropyTables`.
-            std::mem::swap(&mut self.prev_cblock, &mut self.next_cblock);
+            core::mem::swap(&mut self.prev_cblock, &mut self.next_cblock);
             // `writeBlockHeader`.
             write_le24(
                 dst,
@@ -1818,7 +2042,12 @@ impl CCtx {
     }
 
     /// `ZSTD_compress_frameChunk`: the source as blocks.
-    fn compress_frame_chunk(&mut self, dst: &mut [u8], src: &[u8]) -> CResult<usize> {
+    pub(crate) fn compress_frame_chunk(
+        &mut self,
+        dst: &mut [u8],
+        src: &[u8],
+        is_final_chunk: bool,
+    ) -> CResult<usize> {
         let block_size_max = self.block_size_max;
         let mut remaining = src.len();
         let mut ip = 0usize;
@@ -1829,7 +2058,7 @@ impl CCtx {
 
         while remaining != 0 {
             let block_size = self.optimal_block_size(&src[ip..], block_size_max, savings);
-            let last_block = u32::from(block_size == remaining);
+            let last_block = u32::from(is_final_chunk && block_size == remaining);
 
             if dst_capacity < ZSTD_BLOCK_HEADER_SIZE + MIN_CBLOCK_SIZE + 1 {
                 return Err(CError::DstSizeTooSmall); // not enough space to store compressed block
@@ -1896,23 +2125,34 @@ impl CCtx {
             }
         }
 
-        if op > 0 {
+        if is_final_chunk && op > 0 {
             self.stage_ending = true;
         }
         Ok(op)
     }
 
-    /// `ZSTD_writeFrameHeader`, with the size of the content, no checksum and no
-    /// dictionary.
-    fn write_frame_header(&self, dst: &mut [u8], pledged_src_size: u64) -> CResult<usize> {
+    /// `ZSTD_writeFrameHeader`, with optional `Frame_Content_Size`, optional `Content_Checksum`,
+    /// and no dictionary.
+    pub(crate) fn write_frame_header(
+        &self,
+        dst: &mut [u8],
+        pledged_src_size: Option<u64>,
+        checksum: bool,
+    ) -> CResult<usize> {
         let window_size = 1u32 << self.cparams.window_log;
-        let single_segment = u64::from(window_size) >= pledged_src_size;
+        let (single_segment, fcs_code) = match pledged_src_size {
+            Some(size) => {
+                let single_segment = u64::from(window_size) >= size;
+                let fcs_code = u32::from(size >= 256)
+                    + u32::from(size >= 65536 + 256)
+                    + u32::from(size >= 0xFFFF_FFFF);
+                (single_segment, fcs_code)
+            }
+            None => (false, 0),
+        };
         let window_log_byte = ((self.cparams.window_log - ZSTD_WINDOWLOG_ABSOLUTEMIN) << 3) as u8;
-        let fcs_code = u32::from(pledged_src_size >= 256)
-            + u32::from(pledged_src_size >= 65536 + 256)
-            + u32::from(pledged_src_size >= 0xFFFF_FFFF);
         let frame_header_description_byte =
-            ((u32::from(single_segment) << 5) + (fcs_code << 6)) as u8;
+            ((u32::from(checksum) << 2) + (u32::from(single_segment) << 5) + (fcs_code << 6)) as u8;
         let mut pos = 0usize;
 
         if dst.len() < ZSTD_FRAMEHEADERSIZE_MAX {
@@ -1927,40 +2167,49 @@ impl CCtx {
             dst[pos] = window_log_byte;
             pos += 1;
         }
-        match fcs_code {
-            0 => {
-                if single_segment {
-                    dst[pos] = pledged_src_size as u8;
-                    pos += 1;
+        if let Some(pledged_src_size) = pledged_src_size {
+            match fcs_code {
+                0 => {
+                    if single_segment {
+                        dst[pos] = pledged_src_size as u8;
+                        pos += 1;
+                    }
                 }
-            }
-            1 => {
-                dst[pos..pos + 2].copy_from_slice(&((pledged_src_size - 256) as u16).to_le_bytes());
-                pos += 2;
-            }
-            2 => {
-                write_le32(dst, pos, pledged_src_size as u32);
-                pos += 4;
-            }
-            _ => {
-                dst[pos..pos + 8].copy_from_slice(&pledged_src_size.to_le_bytes());
-                pos += 8;
+                1 => {
+                    dst[pos..pos + 2]
+                        .copy_from_slice(&((pledged_src_size - 256) as u16).to_le_bytes());
+                    pos += 2;
+                }
+                2 => {
+                    write_le32(dst, pos, pledged_src_size as u32);
+                    pos += 4;
+                }
+                _ => {
+                    dst[pos..pos + 8].copy_from_slice(&pledged_src_size.to_le_bytes());
+                    pos += 8;
+                }
             }
         }
         Ok(pos)
     }
 
     /// `ZSTD_compressEnd_public` after `ZSTD_compressBegin_internal`: the whole frame.
-    fn compress_end(&mut self, dst: &mut [u8], src: &[u8]) -> CResult<usize> {
+    fn compress_end(
+        &mut self,
+        dst: &mut [u8],
+        src: &[u8],
+        options: CompressOptions,
+    ) -> CResult<usize> {
+        let pledged = options.include_content_size.then_some(src.len() as u64);
         // `ZSTD_compressContinue_internal`, for a frame and its last chunk.
-        let fh_size = self.write_frame_header(dst, src.len() as u64)?;
+        let fh_size = self.write_frame_header(dst, pledged, options.checksum)?;
         let mut c_size = fh_size;
         if !src.is_empty() {
             // `ZSTD_window_update`: the source starts at index `ZSTD_WINDOW_START_INDEX`,
             // and is not what came before, there being nothing before.
             self.match_state.next_to_update = self.match_state.window.dict_limit;
 
-            let chunk_size = self.compress_frame_chunk(&mut dst[fh_size..], src)?;
+            let chunk_size = self.compress_frame_chunk(&mut dst[fh_size..], src, true)?;
             self.consumed_src_size += src.len() as u64;
             self.produced_c_size += (chunk_size + fh_size) as u64;
             c_size += chunk_size;
@@ -1976,7 +2225,148 @@ impl CCtx {
             write_le24(dst, c_size, c_block_header24);
             c_size += ZSTD_BLOCK_HEADER_SIZE;
         }
+        if options.checksum {
+            if dst.len() - c_size < 4 {
+                return Err(CError::DstSizeTooSmall);
+            }
+            let digest = super::zstd_ldm::xxh64(src, 0) as u32;
+            write_le32(dst, c_size, digest);
+            c_size += 4;
+        }
         Ok(c_size)
+    }
+
+    #[cfg(feature = "std")]
+    pub(crate) fn new_streaming(level: Level) -> CCtx {
+        let mut cparams = get_cparams_internal(level.get(), 4 << 20);
+        if cparams.window_log > 21 {
+            cparams.window_log = 21;
+            cparams = adjust_cparams_internal(cparams, 2 << 20);
+        }
+        CCtx::new(cparams, 2 << 20)
+    }
+
+    #[cfg(feature = "std")]
+    pub(crate) fn record_chunk(&mut self, src_len: usize, c_size: usize) {
+        self.consumed_src_size += src_len as u64;
+        self.produced_c_size += c_size as u64;
+    }
+}
+
+/// Reusable Zstandard compressor context that retains its working tables and buffers across
+/// calls, avoiding repeated heap allocations.
+pub struct Compressor {
+    cctx: Option<CCtx>,
+}
+
+impl fmt::Debug for Compressor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Compressor")
+            .field("initialized", &self.cctx.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for Compressor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Compressor {
+    /// Creates a new reusable [`Compressor`]. Internal tables are allocated lazily on first
+    /// use and reused by subsequent calls.
+    #[must_use]
+    pub const fn new() -> Self {
+        Compressor { cctx: None }
+    }
+
+    fn prepare(&mut self, level: Level, src_size: u64) -> &mut CCtx {
+        let cparams = get_cparams_internal(level.get(), src_size);
+        if let Some(cctx) = &mut self.cctx {
+            cctx.reset_for_frame(cparams, src_size);
+        } else {
+            self.cctx = Some(CCtx::new(cparams, src_size));
+        }
+        self.cctx.as_mut().expect("initialized above")
+    }
+
+    /// Compresses `data` to one Zstandard frame at `level`, producing output byte-for-byte
+    /// identical to [`compress`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompressError::SourceTooLarge`] if `data` is 2 GiB or larger.
+    pub fn compress(&mut self, data: &[u8], level: Level) -> Result<Vec<u8>, CompressError> {
+        self.compress_with_options(data, CompressOptions::new(level))
+    }
+
+    /// Compresses `data` to one Zstandard frame with custom [`CompressOptions`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompressError::SourceTooLarge`] if `data` is 2 GiB or larger.
+    pub fn compress_with_options(
+        &mut self,
+        data: &[u8],
+        options: CompressOptions,
+    ) -> Result<Vec<u8>, CompressError> {
+        if data.len() >= 1usize << 31 {
+            return Err(CompressError::SourceTooLarge);
+        }
+        let mut dst = vec![0u8; compress_bound(data.len())];
+        let cctx = self.prepare(options.level, data.len() as u64);
+        let size = cctx
+            .compress_end(&mut dst, data, options)
+            .map_err(|_| CompressError::Internal)?;
+        dst.truncate(size);
+        Ok(dst)
+    }
+
+    /// Compresses `data` at `level` directly into `dst`, returning the number of bytes
+    /// written.
+    ///
+    /// When `dst.len() >= compress_bound(data.len())`, the output is byte-for-byte identical
+    /// to [`compress`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompressError::SourceTooLarge`] if `data` is 2 GiB or larger, or
+    /// [`CompressError::OutputTooSmall`] if `dst` cannot hold the compressed frame.
+    pub fn compress_into(
+        &mut self,
+        data: &[u8],
+        dst: &mut [u8],
+        level: Level,
+    ) -> Result<usize, CompressError> {
+        self.compress_into_with_options(data, dst, CompressOptions::new(level))
+    }
+
+    /// Compresses `data` with `options` directly into `dst`, returning the number of bytes
+    /// written.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompressError::SourceTooLarge`] if `data` is 2 GiB or larger, or
+    /// [`CompressError::OutputTooSmall`] if `dst` cannot hold the compressed frame.
+    pub fn compress_into_with_options(
+        &mut self,
+        data: &[u8],
+        dst: &mut [u8],
+        options: CompressOptions,
+    ) -> Result<usize, CompressError> {
+        if data.len() >= 1usize << 31 {
+            return Err(CompressError::SourceTooLarge);
+        }
+        let bound = compress_bound(data.len());
+        let has_bound = dst.len() >= bound;
+        let work_dst = if has_bound { &mut dst[..bound] } else { dst };
+        let cctx = self.prepare(options.level, data.len() as u64);
+        cctx.compress_end(work_dst, data, options)
+            .map_err(|err| match err {
+                CError::DstSizeTooSmall if !has_bound => CompressError::OutputTooSmall,
+                _ => CompressError::Internal,
+            })
     }
 }
 
@@ -1990,22 +2380,82 @@ impl CCtx {
 /// [`CompressError::SourceTooLarge`] for data of 2 GiB or more, which this port does not
 /// compress.
 pub fn compress(data: &[u8], level: Level) -> Result<Vec<u8>, CompressError> {
+    compress_with_options(data, CompressOptions::new(level))
+}
+
+/// Compresses `data` to one Zstandard frame with custom [`CompressOptions`] (such as an
+/// `XXH64` content checksum or omitting `Frame_Content_Size`).
+///
+/// With [`CompressOptions::new(level)`](CompressOptions::new), the output is byte for byte
+/// identical to [`compress`].
+///
+/// # Errors
+///
+/// Returns [`CompressError::SourceTooLarge`] for data of 2 GiB or more.
+pub fn compress_with_options(
+    data: &[u8],
+    options: CompressOptions,
+) -> Result<Vec<u8>, CompressError> {
     if data.len() >= 1usize << 31 {
         return Err(CompressError::SourceTooLarge);
     }
-    let cparams = get_cparams_internal(level.get(), data.len() as u64);
+    let cparams = get_cparams_internal(options.level.get(), data.len() as u64);
     let mut dst = vec![0u8; compress_bound(data.len())];
     let mut cctx = CCtx::new(cparams, data.len() as u64);
-    // (An output of `compress_bound` bytes has room for any source.)
     let size = cctx
-        .compress_end(&mut dst, data)
+        .compress_end(&mut dst, data, options)
         .map_err(|_| CompressError::Internal)?;
     dst.truncate(size);
     Ok(dst)
 }
 
+/// Compresses `data` to one Zstandard frame at `level` directly into `dst`, returning the
+/// number of bytes written.
+///
+/// Size `dst` to at least [`compress_bound(data.len())`](compress_bound) bytes to guarantee
+/// room for any input and byte-for-byte parity with [`compress`].
+///
+/// # Errors
+///
+/// Returns [`CompressError::SourceTooLarge`] for data of 2 GiB or more, or
+/// [`CompressError::OutputTooSmall`] if `dst` is too small to hold the frame.
+pub fn compress_into(data: &[u8], dst: &mut [u8], level: Level) -> Result<usize, CompressError> {
+    compress_into_with_options(data, dst, CompressOptions::new(level))
+}
+
+/// Compresses `data` with custom [`CompressOptions`] directly into `dst`, returning the
+/// number of bytes written.
+///
+/// # Errors
+///
+/// Returns [`CompressError::SourceTooLarge`] for data of 2 GiB or more, or
+/// [`CompressError::OutputTooSmall`] if `dst` is too small to hold the frame.
+pub fn compress_into_with_options(
+    data: &[u8],
+    dst: &mut [u8],
+    options: CompressOptions,
+) -> Result<usize, CompressError> {
+    if data.len() >= 1usize << 31 {
+        return Err(CompressError::SourceTooLarge);
+    }
+    let bound = compress_bound(data.len());
+    let has_bound = dst.len() >= bound;
+    let work_dst = if has_bound { &mut dst[..bound] } else { dst };
+    let cparams = get_cparams_internal(options.level.get(), data.len() as u64);
+    let mut cctx = CCtx::new(cparams, data.len() as u64);
+    cctx.compress_end(work_dst, data, options)
+        .map_err(|err| match err {
+            CError::DstSizeTooSmall if !has_bound => CompressError::OutputTooSmall,
+            _ => CompressError::Internal,
+        })
+}
+
 #[cfg(test)]
 mod tests {
+    use alloc::format;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
     use super::super::zstd_decompress::decompress;
     use super::*;
     use crate::Level;
@@ -2164,7 +2614,7 @@ mod tests {
         const { assert!(SEQUENCES >= LONGNBSEQ) };
         let mut frame = vec![0u8; compress_bound(expected.len())];
         let header = cctx
-            .write_frame_header(&mut frame, expected.len() as u64)
+            .write_frame_header(&mut frame, Some(expected.len() as u64), false)
             .unwrap();
         let whole = cctx.seq_store.whole();
         let size = cctx

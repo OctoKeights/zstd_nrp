@@ -19,7 +19,9 @@ refuses a damaged one with the original's message.
 - **Every frame read.** The decoder is a port of the reference decoder that comes with zstd
   (`doc/educational_decoder`), dictionaries included.
 
-- **Zero dependencies.** Standard library only: no C compiler, no build script.
+- **Zero dependencies & `no_std`-ready.** Core + `alloc` with `default-features = false`,
+  and `std::io::{Read, Write}` streaming adapters (`io::Encoder`, `io::Decoder`) with the
+  default `std` feature. No C compiler, no build script.
 
 - **No `unsafe` code.** Enforced by `#![forbid(unsafe_code)]`.
 
@@ -47,9 +49,12 @@ assert_eq!(decompress(&frame, data.len()).unwrap(), data);
 
 ## Scope
 
-One-shot compression of data held in memory, and decompression of single frames, with or
-without a dictionary. Compression with dictionaries, checksums, streaming and threads is not
-ported.
+One-shot and reusable-context compression (`compress`, `compress_into`, `compress_with_options`,
+`Compressor`), frame and multi-frame decompression (`decompress`, `decompress_into`,
+`decompress_with_options`, `decompress_frame`, `decompress_stream`, `Decompressor`) with
+optional `XXH64` checksum verification, strict RFC 8878 validation, skippable frames, and
+dictionaries, plus `std::io::{Read, Write}` streaming (`io::Encoder`, `io::Decoder`).
+Dictionary compression and multithreading are not ported.
 
 ## Licence
 

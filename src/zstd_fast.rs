@@ -239,7 +239,7 @@ pub(crate) fn compress_block_fast(
                     // Store the sequence.
                     let r_length = count(src, ip0 + 4, ip0 + 4 - rep_offset2 as usize, iend) + 4;
                     // swap rep_offset2 <=> rep_offset1
-                    std::mem::swap(&mut rep_offset1, &mut rep_offset2);
+                    core::mem::swap(&mut rep_offset1, &mut rep_offset2);
                     hash_table[hash_ptr(src, ip0, hlog, mls)] = (ip0 + BASE) as u32;
                     ip0 += r_length;
                     seq_store.store_seq(src, anchor, 0, REPCODE1_TO_OFFBASE, r_length);

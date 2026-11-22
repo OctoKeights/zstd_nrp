@@ -3,13 +3,21 @@
 //!
 //! - [`compress`] compresses to one Zstandard frame at a [`Level`], producing the frames
 //!   `ZSTD_compress` produces, byte for byte, at every level, with all nine strategies,
-//!   block splitting, long-distance matching and the entropy coders.
+//!   block splitting, long-distance matching and the entropy coders. [`compress_with_options`]
+//!   adds `XXH64` content checksums and optional header content sizes, [`compress_into`]
+//!   writes directly into a caller slice, and [`Compressor`] reuses working tables across
+//!   calls.
 //!
 //! - [`decompress`] decompresses a frame, and [`decompress_with_dict`] one compressed with a
 //!   [`Dictionary`]: the port of the reference decoder that comes with zstd
-//!   (`doc/educational_decoder`).
+//!   (`doc/educational_decoder`). [`decompress_with_options`], [`decompress_frame`], and
+//!   [`decompress_stream`] add `XXH64` checksum verification, strict RFC 8878 validation,
+//!   skippable frames, and concatenated streams, while [`Decompressor`] and
+//!   [`decompress_into`] avoid repeated allocations.
 //!
-//! - [`decompressed_size`] reads the size a frame's header records.
+//! - [`decompressed_size`] and [`frame_dict_id`] inspect a frame's header, and (with the
+//!   default `std` feature) `io::Encoder` and `io::Decoder` provide streaming
+//!   `std::io::Write` / `std::io::Read` adapters.
 //!
 //! ```
 //! use zstd_nrp::{Level, compress, decompress};
@@ -26,8 +34,11 @@
 //! `zstd_presplit` what decides where a block ends early, `clevels` the table of levels, and
 //! `zstd_compress` the frame and its blocks.
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+extern crate alloc;
 
 mod bitstream;
 mod clevels;
@@ -37,6 +48,8 @@ pub mod compare_hooks;
 mod fse_compress;
 mod hist;
 mod huf_compress;
+#[cfg(feature = "std")]
+pub mod io;
 mod zstd_compress;
 mod zstd_compress_literals;
 mod zstd_compress_sequences;
@@ -48,9 +61,15 @@ mod zstd_ldm;
 mod zstd_opt;
 mod zstd_presplit;
 
-pub use zstd_compress::{compress, compress_bound};
+pub use zstd_compress::{
+    CompressOptions, Compressor, checked_compress_bound, compress, compress_bound, compress_into,
+    compress_into_with_options, compress_with_options,
+};
 pub use zstd_decompress::{
-    DecompressError, Dictionary, decompress, decompress_with_dict, decompressed_size,
+    DecompressError, DecompressErrorKind, DecompressOptions, Decompressor, Dictionary, decompress,
+    decompress_frame, decompress_frame_with_options, decompress_into, decompress_into_with_options,
+    decompress_stream, decompress_with_dict, decompress_with_options, decompressed_size,
+    frame_dict_id,
 };
 
 use core::fmt;
@@ -81,6 +100,21 @@ impl Level {
             0 => Some(Level::DEFAULT),
             -131_072..=22 => Some(Level(level)),
             _ => None,
+        }
+    }
+
+    /// Clamps `level` into [`Level::MIN`]..=[`Level::MAX`], mapping `0` to [`Level::DEFAULT`]
+    /// just as zstd's `ZSTD_compress` does.
+    #[must_use]
+    pub const fn new_clamped(level: i32) -> Level {
+        if level == 0 {
+            Level::DEFAULT
+        } else if level < Level::MIN.0 {
+            Level::MIN
+        } else if level > Level::MAX.0 {
+            Level::MAX
+        } else {
+            Level(level)
         }
     }
 
@@ -119,7 +153,7 @@ impl fmt::Display for UnsupportedLevel {
     }
 }
 
-impl std::error::Error for UnsupportedLevel {}
+impl core::error::Error for UnsupportedLevel {}
 
 /// Why data could not be compressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -127,6 +161,9 @@ impl std::error::Error for UnsupportedLevel {}
 pub enum CompressError {
     /// The data is 2 GiB or more, which this port does not compress in one frame.
     SourceTooLarge,
+    /// The destination slice passed to [`compress_into`] or [`Compressor::compress_into`] was
+    /// too small to hold the compressed frame.
+    OutputTooSmall,
     /// The compressor ran out of room in an output of `ZSTD_compressBound` bytes, which no
     /// input should make it do; this would be a bug in the port.
     Internal,
@@ -136,12 +173,26 @@ impl fmt::Display for CompressError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             CompressError::SourceTooLarge => "the data is too large to compress (2 GiB or more)",
+            CompressError::OutputTooSmall => "destination buffer is too small for compressed frame",
             CompressError::Internal => "the compressor failed (a bug in zstd_nrp)",
         })
     }
 }
 
-impl std::error::Error for CompressError {}
+impl core::error::Error for CompressError {}
+
+#[cfg(feature = "std")]
+impl From<CompressError> for std::io::Error {
+    fn from(err: CompressError) -> Self {
+        let kind = match err {
+            CompressError::SourceTooLarge | CompressError::OutputTooSmall => {
+                std::io::ErrorKind::InvalidInput
+            }
+            CompressError::Internal => std::io::ErrorKind::Other,
+        };
+        std::io::Error::new(kind, err)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -153,6 +204,11 @@ mod tests {
         assert_eq!(Level::new(-131_072), Some(Level::MIN));
         assert_eq!(Level::new(-131_073), None);
         assert_eq!(Level::try_from(23), Err(UnsupportedLevel(23)));
+        assert_eq!(Level::new_clamped(0), Level::DEFAULT);
+        assert_eq!(Level::new_clamped(-500_000), Level::MIN);
+        assert_eq!(Level::new_clamped(100), Level::MAX);
+        assert_eq!(Level::new_clamped(-7), Level(-7));
+        assert_eq!(Level::new_clamped(15), Level(15));
         assert!(Level::MIN < Level::DEFAULT && Level::DEFAULT < Level::MAX);
     }
 }
